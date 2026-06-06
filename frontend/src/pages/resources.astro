@@ -1,0 +1,288 @@
+---
+import Layout from '../layouts/Layout.astro';
+import ResourceRow from '../components/inventory/ResourceRow.astro';
+import DestroyModal from '../components/modals/DestroyModal.astro';
+import EditResourceModal from '../components/modals/EditResourceModal.astro';
+import ReprovisionModal from '../components/modals/ReprovisionModal.astro';
+import AuditModal from '../components/modals/AuditModal.astro';
+import SnapshotModal from '../components/modals/SnapshotModal.astro';
+import AdoptModal from '../components/modals/AdoptModal.astro';
+import WebConsoleModal from '../components/modals/WebConsoleModal.astro';
+import TaskManager from '../components/widgets/TaskManager.astro';
+// SSR fetch uses the Docker-internal URL so traffic stays on the private network.
+// BACKEND_URL is injected at runtime via the frontend container's environment.
+const _ssrBackend: string = process.env.BACKEND_URL ?? "http://localhost:8000";
+const cookieHeader = Astro.request.headers.get('cookie') ?? '';
+let vms = [];
+let fetchError = null;
+
+try {
+  const res = await fetch(`${_ssrBackend}/api/inventory`, {
+    headers: { 'Cookie': cookieHeader }
+  });
+  if (res.ok) {
+    vms = await res.json();
+  } else if (res.status === 401) {
+    return Astro.redirect('/login');
+  } else {
+    fetchError = "Error conectando con la API de FastAPI.";
+  }
+} catch (error) {
+  fetchError = "No se pudo alcanzar el servidor de Gestión.";
+}
+---
+
+<Layout title="Inventario | Proxmox IDP">
+  <div class="mb-8 flex justify-between items-end">
+    <div>
+      <h1 class="text-3xl font-bold text-white mb-2">Inventario de Recursos</h1>
+      <p class="text-slate-400">Monitoriza y gestiona el ciclo de vida de las máquinas virtuales en el clúster.</p>
+    </div>
+    <div class="flex gap-3">
+      <button id="refreshBtn" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-lg text-sm font-medium border border-slate-700 transition-all flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+        Refrescar
+      </button>
+    </div>
+  </div>
+
+  <div class="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="bg-slate-950/50 border-b border-slate-800">
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">VMID</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Nombre / Recurso</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Nodo</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Especificaciones</th>
+            <th class="px-4 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              <span class="flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                Métricas Live
+              </span>
+            </th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">Estado</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">Gestión</th>
+            <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800/50">
+          {fetchError ? (
+            <tr><td colspan="8" class="px-6 py-12 text-center text-red-400">{fetchError}</td></tr>
+          ) : vms.length === 0 ? (
+            <tr><td colspan="8" class="px-6 py-12 text-center text-slate-500">No se encontraron máquinas virtuales en el clúster.</td></tr>
+          ) : (
+            vms.map(vm => <ResourceRow vm={vm} />)
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <DestroyModal />
+  <EditResourceModal />
+  <ReprovisionModal />
+  <AuditModal />
+  <SnapshotModal />
+  <AdoptModal />
+  <WebConsoleModal />
+  <TaskManager />
+</Layout>
+
+<script>
+  import { apiFetch } from '../lib/api.ts';
+  import type { VMMetrics } from '../lib/types.ts';
+
+  // ── Live metrics polling ────────────────────────────────────────────────────
+  //
+  // One fetch → one Proxmox API call server-side → zero N+1.
+  // DOM writes touch only style.width + style.backgroundColor + textContent.
+  // No table re-renders, no flicker.
+
+  /** Returns a hex color appropriate for the given usage percentage. */
+  function metricColor(pct: number): string {
+    if (pct > 85) return '#ef4444';  // red-500
+    if (pct > 65) return '#facc15';  // yellow-400
+    return '#22c55e';                 // emerald-500
+  }
+
+  function applyMetrics(metrics: VMMetrics): void {
+    for (const [vmid, data] of Object.entries(metrics)) {
+      const cell = document.querySelector<HTMLElement>(`[data-vmid-metrics="${vmid}"]`);
+      if (!cell) continue;
+
+      const cpuBar   = cell.querySelector<HTMLElement>('.m-cpu-bar');
+      const ramBar   = cell.querySelector<HTMLElement>('.m-ram-bar');
+      const cpuLabel = cell.querySelector<HTMLElement>('.m-cpu-label');
+      const ramLabel = cell.querySelector<HTMLElement>('.m-ram-label');
+      if (!cpuBar || !ramBar) continue;
+
+      const running = data.status === 'running';
+
+      // ── Width (triggers CSS transition) ──
+      cpuBar.style.width = running ? `${data.cpu_pct}%` : '0%';
+      ramBar.style.width = running ? `${data.mem_pct}%` : '0%';
+
+      // ── Color via inline style (overrides Tailwind bg-slate-700 when running) ──
+      cpuBar.style.backgroundColor = running ? metricColor(data.cpu_pct) : '';
+      ramBar.style.backgroundColor = running ? metricColor(data.mem_pct) : '';
+
+      // ── Labels ──
+      if (cpuLabel) cpuLabel.textContent = running ? `${data.cpu_pct}%` : '—';
+      if (ramLabel) ramLabel.textContent = running ? `${data.mem_pct}%` : 'Offline';
+    }
+  }
+
+  async function pollMetrics(): Promise<void> {
+    try {
+      const res = await apiFetch('/inventory/metrics');
+      if (!res.ok) return;
+      applyMetrics(await res.json());
+    } catch (_) { /* network hiccup — keep showing last known state */ }
+  }
+
+  // Fetch immediately on load, then every 3 s
+  pollMetrics();
+  setInterval(pollMetrics, 3_000);
+
+  // ── TTL countdown (pure client-side time math — no fetch) ────────────────────
+  const TTL_BADGE_BASE =
+    'ttl-badge text-[10px] font-bold px-2 py-1 rounded border uppercase tracking-tighter inline-flex items-center gap-1 ';
+
+  function applyTtl(): void {
+    const now = Date.now() / 1000;
+    document.querySelectorAll<HTMLElement>('.ttl-badge').forEach(el => {
+      const exp = parseFloat(el.getAttribute('data-ttl-expires') || '');
+      if (isNaN(exp)) return;
+      const txtEl = el.querySelector<HTMLElement>('.ttl-text');
+      const rem = exp - now;
+
+      let label: string;
+      let tone: string;
+      if (rem <= 0) {
+        label = 'Expirando…';
+        tone = 'bg-red-500/10 text-red-400 border-red-500/20 animate-pulse';
+      } else {
+        const d = Math.floor(rem / 86400);
+        const h = Math.floor((rem % 86400) / 3600);
+        const m = Math.floor((rem % 3600) / 60);
+        if (rem > 86400) label = `${d}d ${h}h`;
+        else if (rem > 3600) label = `${h}h ${m}m`;
+        else label = `${m}m`;
+
+        if (rem < 3600) tone = 'bg-red-500/10 text-red-400 border-red-500/20 animate-pulse';
+        else if (rem < 86400) tone = 'bg-orange-400/10 text-orange-400 border-orange-400/20';
+        else tone = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+      }
+
+      el.className = TTL_BADGE_BASE + tone;
+      if (txtEl) txtEl.textContent = label;
+    });
+  }
+
+  applyTtl();
+  setInterval(applyTtl, 60_000);
+
+  // ── Inventory controls ──────────────────────────────────────────────────────
+
+  const refreshBtn = document.getElementById('refreshBtn');
+  const destroyModal = document.getElementById('destroyModal') as HTMLDialogElement;
+  const modalVmName = document.getElementById('destroyModalVmName');
+  const cancelDestroyBtn = document.getElementById('cancelDestroyBtn');
+  const confirmDestroyBtn = document.getElementById('confirmDestroyBtn');
+
+  let vmToDestroy = null;
+
+  refreshBtn.addEventListener('click', () => {
+    refreshBtn.innerHTML = `<span class="animate-spin text-slate-400">⚙️</span> Escaneando...`;
+    window.location.reload();
+  });
+
+  window.handleDestroy = (vmName, vmid, node) => {
+    vmToDestroy = { name: vmName, vmid: vmid, node_name: node };
+    modalVmName.innerText = vmName;
+    destroyModal.showModal();
+  };
+
+  // Renew a VM's TTL (hours) or make it permanent (null).
+  window.handleRenewTTL = async (vmid, hours) => {
+    try {
+      const res = await apiFetch(`/inventory/${vmid}/ttl`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ttl_hours: hours })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Error actualizando el TTL');
+      }
+      window.location.reload();
+    } catch (error) {
+      alert(`No se pudo actualizar el ciclo de vida: ${error.message}`);
+    }
+  };
+
+  cancelDestroyBtn.addEventListener('click', () => {
+    destroyModal.close();
+    vmToDestroy = null;
+  });
+
+  window.handleAction = async (action, vmid, node) => {
+    const btn = event.currentTarget as HTMLButtonElement;
+    const originalHtml = btn.innerHTML;
+    btn.innerHTML = `<span class="animate-spin text-slate-400">⚙️</span>`;
+    btn.disabled = true;
+
+    try {
+      const res = await apiFetch('/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action, vmid: parseInt(vmid), node_name: node })
+      });
+      
+      if (!res.ok) throw new Error("Fallo en la API");
+      
+      window.location.reload();
+      
+    } catch (error) {
+      alert("Error al intentar cambiar el estado de energía.");
+      btn.innerHTML = originalHtml;
+      btn.disabled = false;
+    }
+  };
+
+  confirmDestroyBtn.addEventListener('click', async () => {
+    if (!vmToDestroy) return;
+
+    const originalText = confirmDestroyBtn.innerHTML;
+    confirmDestroyBtn.innerHTML = `<span class="animate-spin">⚙️</span> Destruyendo...`;
+    confirmDestroyBtn.disabled = true;
+    cancelDestroyBtn.disabled = true;
+
+    try {
+      const res = await apiFetch('/destroy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vm_name: vmToDestroy.name,
+          vmid: vmToDestroy.vmid,
+          node_name: vmToDestroy.node_name
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Error desconocido en Terraform");
+      }
+
+      destroyModal.close();
+      
+    } catch (error) {
+      alert(`Error crítico al destruir: ${error.message}`);
+      confirmDestroyBtn.innerHTML = originalText;
+      confirmDestroyBtn.disabled = false;
+      cancelDestroyBtn.disabled = false;
+      vmToDestroy = null;
+    }
+  });
+</script>

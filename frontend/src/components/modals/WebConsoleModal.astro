@@ -1,0 +1,293 @@
+---
+---
+
+<dialog
+  id="consoleModal"
+  class="w-[92vw] max-w-5xl h-[84vh] bg-slate-950 border border-slate-700/80 rounded-2xl shadow-2xl text-slate-300 p-0 backdrop:bg-black/80 backdrop:backdrop-blur-sm overflow-hidden flex flex-col m-auto open:animate-in open:fade-in-90 open:zoom-in-95 outline-none"
+>
+  <div class="flex items-center justify-between gap-3 px-4 py-3 bg-slate-900 border-b border-slate-800 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <svg class="w-4 h-4 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+      </svg>
+      <span id="consoleVmName" class="font-mono text-sm font-semibold text-white truncate max-w-[200px]"></span>
+      <span id="consoleStatusBadge" class="shrink-0 flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700/60">
+        <span id="consoleStatusDot" class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+        <span id="consoleStatusText" class="text-amber-300">Conectando</span>
+      </span>
+    </div>
+
+    <div class="flex items-center gap-1 bg-slate-800/50 border border-slate-700/60 rounded-lg p-0.5">
+      <button id="consoleVncBtn" class="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all bg-slate-700 text-white border border-slate-600/80 shadow-sm">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+        </svg>
+        Gráfica
+      </button>
+      <button id="consoleSerialBtn" class="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all text-slate-400 hover:text-white">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+        </svg>
+        Serie
+      </button>
+    </div>
+
+    <button id="closeConsoleBtn" class="shrink-0 p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-all">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="relative flex-1 overflow-hidden bg-[#020617]">
+    <div id="consoleVncContainer" class="absolute inset-0 [&>canvas]:w-full [&>canvas]:h-full"></div>
+    <div id="consoleXtermContainer" class="absolute inset-0 hidden p-1.5"></div>
+
+    <div id="consoleOverlay" class="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-slate-950/95 z-10">
+      <div id="consoleLoadingPanel" class="flex flex-col items-center gap-3">
+        <svg class="w-8 h-8 text-slate-600 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <p class="text-sm text-slate-500">Iniciando consola…</p>
+      </div>
+      <div id="consoleErrorPanel" class="hidden flex-col items-center gap-3 text-center">
+        <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <p id="consoleErrorMsg" class="text-sm text-red-300 max-w-xs"></p>
+        <button id="consoleRetryBtn" class="text-xs bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-700 transition-all">
+          Reintentar
+        </button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  import { apiFetch, wsUrl } from '@/lib/api.ts';
+
+  const modal        = document.getElementById('consoleModal') as HTMLDialogElement;
+  const closeBtn     = document.getElementById('closeConsoleBtn')!;
+  const vncBtn       = document.getElementById('consoleVncBtn') as HTMLButtonElement;
+  const serialBtn    = document.getElementById('consoleSerialBtn') as HTMLButtonElement;
+  const vmNameEl     = document.getElementById('consoleVmName')!;
+  const statusDot    = document.getElementById('consoleStatusDot')!;
+  const statusText   = document.getElementById('consoleStatusText')!;
+  const overlay      = document.getElementById('consoleOverlay')!;
+  const loadingPanel = document.getElementById('consoleLoadingPanel')!;
+  const errorPanel   = document.getElementById('consoleErrorPanel')!;
+  const errorMsg     = document.getElementById('consoleErrorMsg')!;
+  const retryBtn     = document.getElementById('consoleRetryBtn')!;
+  const vncContainer  = document.getElementById('consoleVncContainer')!;
+  const xtermContainer = document.getElementById('consoleXtermContainer')!;
+
+  type Engine = 'vnc' | 'serial';
+
+  let rfb: any = null;
+  let term: any = null;
+  let fitAddon: any = null;
+  let resizeObs: ResizeObserver | null = null;
+  let currentWs: WebSocket | null = null;
+  let currentEngine: Engine = 'vnc';
+  let currentVmid: number | null = null;
+  let currentNode: string | null = null;
+
+  const STATUS = {
+    connecting:   ['bg-amber-400 animate-pulse', 'Conectando',   'text-amber-300'],
+    connected:    ['bg-emerald-500',             'Conectado',    'text-emerald-300'],
+    disconnected: ['bg-slate-500',               'Desconectado', 'text-slate-400'],
+    error:        ['bg-red-500',                 'Error',        'text-red-300'],
+  } as const;
+
+  function setStatus(state: keyof typeof STATUS) {
+    const [dot, label, txt] = STATUS[state];
+    statusDot.className   = `w-1.5 h-1.5 rounded-full ${dot}`;
+    statusText.textContent = label;
+    statusText.className   = txt;
+  }
+
+  function showOverlay(panel: 'loading' | 'error' | 'none') {
+    overlay.classList.toggle('hidden', panel === 'none');
+    loadingPanel.classList.toggle('hidden', panel !== 'loading');
+    errorPanel.classList.toggle('hidden', panel !== 'error');
+    if (panel !== 'none') {
+      errorPanel.classList.toggle('flex', panel === 'error');
+    }
+  }
+
+  function setEngineBtn(active: Engine) {
+    const on  = 'flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all bg-slate-700 text-white border border-slate-600/80 shadow-sm';
+    const off = 'flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all text-slate-400 hover:text-white';
+    vncBtn.className    = active === 'vnc'    ? on : off;
+    serialBtn.className = active === 'serial' ? on : off;
+  }
+
+  function teardown() {
+    if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+    if (rfb)  { try { rfb.disconnect(); }  catch (_) {} rfb = null; }
+    if (term) { try { term.dispose(); }    catch (_) {} term = null; fitAddon = null; }
+    if (currentWs) { try { currentWs.close(); } catch (_) {} currentWs = null; }
+    vncContainer.innerHTML   = '';
+    xtermContainer.innerHTML = '';
+  }
+
+  async function connect(engine: Engine) {
+    teardown();
+    currentEngine = engine;
+    setEngineBtn(engine);
+    setStatus('connecting');
+    showOverlay('loading');
+    vncContainer.classList.toggle('hidden', engine !== 'vnc');
+    xtermContainer.classList.toggle('hidden', engine !== 'serial');
+
+    try {
+      const res  = await apiFetch(`/vms/${currentNode}/${currentVmid}/console?engine=${engine}`, { method: 'POST' });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setStatus('error');
+        errorMsg.textContent = data.detail ?? 'Error al inicializar la consola';
+        showOverlay('error');
+        return;
+      }
+
+      if (engine === 'vnc') {
+        const avail = data.serial_available ?? false;
+        serialBtn.disabled = !avail;
+        serialBtn.title    = avail ? '' : 'Esta VM no tiene consola serie configurada';
+        serialBtn.classList.toggle('opacity-40', !avail);
+        serialBtn.classList.toggle('cursor-not-allowed', !avail);
+
+        const url = wsUrl(`/vms/${currentNode}/${currentVmid}/vncwebsocket?port=${data.port}&vncticket=${encodeURIComponent(data.ticket)}`);
+        const { default: RFB } = await import('@novnc/novnc');
+
+        rfb = new RFB(vncContainer, url, { credentials: { password: data.ticket } });
+        rfb.scaleViewport = true;
+        rfb.background    = '#020617';
+        rfb.addEventListener('connect', () => { showOverlay('none'); setStatus('connected'); });
+        rfb.addEventListener('disconnect', (e: CustomEvent<{ clean: boolean }>) => {
+          if (e.detail?.clean) {
+            setStatus('disconnected');
+          } else {
+            setStatus('error');
+            errorMsg.textContent = 'La conexión se perdió inesperadamente';
+            showOverlay('error');
+          }
+        });
+        rfb.addEventListener('credentialsrequired', () => rfb.sendCredentials({ password: data.ticket }));
+
+      } else {
+        const url = wsUrl(`/vms/${currentNode}/${currentVmid}/vncwebsocket?port=${data.port}&vncticket=${encodeURIComponent(data.ticket)}`);
+
+        const [{ Terminal }, { FitAddon: FA }] = await Promise.all([
+          import('@xterm/xterm'),
+          import('@xterm/addon-fit'),
+        ]);
+        await import('@xterm/xterm/css/xterm.css');
+
+        term = new Terminal({
+          theme: {
+            background:        '#020617',
+            foreground:        '#cbd5e1',
+            cursor:            '#60a5fa',
+            cursorAccent:      '#020617',
+            selectionBackground: '#1e3a5f',
+            black:             '#0f172a',
+            brightBlack:       '#334155',
+            red:               '#f87171',
+            brightRed:         '#fca5a5',
+            green:             '#4ade80',
+            brightGreen:       '#86efac',
+            yellow:            '#facc15',
+            brightYellow:      '#fde047',
+            blue:              '#60a5fa',
+            brightBlue:        '#93c5fd',
+            magenta:           '#c084fc',
+            brightMagenta:     '#d8b4fe',
+            cyan:              '#22d3ee',
+            brightCyan:        '#67e8f9',
+            white:             '#e2e8f0',
+            brightWhite:       '#f8fafc',
+          },
+          fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", ui-monospace, monospace',
+          fontSize:    14,
+          lineHeight:  1.4,
+          cursorBlink: true,
+          allowProposedApi: true,
+        });
+
+        fitAddon = new FA();
+        term.loadAddon(fitAddon);
+        term.open(xtermContainer);
+        fitAddon.fit();
+
+        const ws = new WebSocket(url, ['binary']);
+        currentWs = ws;
+
+        ws.onopen = () => {
+          ws.send(`${data.user}:${data.ticket}\n`);
+          const { cols, rows } = term;
+          ws.send(`1:${cols}:${rows}:`);
+          showOverlay('none');
+          setStatus('connected');
+          term.focus();
+        };
+
+        ws.onmessage = (ev) => {
+          if (typeof ev.data === 'string') {
+            term.write(ev.data);
+          } else {
+            (ev.data as Blob).arrayBuffer().then((buf) => term.write(new Uint8Array(buf)));
+          }
+        };
+
+        ws.onclose = () => setStatus('disconnected');
+        ws.onerror = () => {
+          setStatus('error');
+          errorMsg.textContent = 'Error en la conexión WebSocket';
+          showOverlay('error');
+        };
+
+        term.onData((input: string) => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(`0:${input.length}:${input}`);
+        });
+
+        resizeObs = new ResizeObserver(() => {
+          if (!fitAddon || !term) return;
+          fitAddon.fit();
+          const { cols, rows } = term;
+          if (ws.readyState === WebSocket.OPEN) ws.send(`1:${cols}:${rows}:`);
+        });
+        resizeObs.observe(xtermContainer);
+      }
+
+    } catch (err: any) {
+      setStatus('error');
+      errorMsg.textContent = err?.message ?? 'Error inesperado al conectar';
+      showOverlay('error');
+    }
+  }
+
+  (window as any).openConsoleModal = (vmName: string, vmid: number, node: string) => {
+    currentVmid  = vmid;
+    currentNode  = node;
+    vmNameEl.textContent = vmName;
+    serialBtn.disabled   = false;
+    serialBtn.title      = '';
+    serialBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+    modal.showModal();
+    connect('vnc');
+  };
+
+  closeBtn.addEventListener('click', () => modal.close());
+  modal.addEventListener('close', teardown);
+
+  vncBtn.addEventListener('click', () => {
+    if (currentEngine !== 'vnc') connect('vnc');
+  });
+  serialBtn.addEventListener('click', () => {
+    if (!serialBtn.disabled && currentEngine !== 'serial') connect('serial');
+  });
+  retryBtn.addEventListener('click', () => connect(currentEngine));
+</script>

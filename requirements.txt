@@ -1,0 +1,15 @@
+# Internal Developer Platform — Python backend dependencies
+# Generated: 2026-05-31
+# Install: pip install -r requirements.txt
+
+anyio==4.13.0
+fastapi==0.136.1
+proxmoxer==2.3.0
+PyJWT==2.10.1
+pydantic==2.13.4
+pydantic_core==2.46.4
+python-dotenv==1.2.2
+requests>=2.32.3          # proxmoxer https backend
+starlette==1.0.0
+uvicorn[standard]==0.46.0
+websockets>=16.0

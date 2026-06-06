@@ -1,0 +1,175 @@
+---
+---
+
+<dialog closedby="any" id="editResourceModal" class="bg-slate-900 text-slate-300 rounded-xl border border-slate-800 shadow-2xl p-0 backdrop:bg-black/70 backdrop:backdrop-blur-sm w-full max-w-2xl m-auto open:animate-in open:fade-in-90 open:zoom-in-95">
+  <form id="editResourceForm" method="dialog" class="flex flex-col">
+    
+    <div class="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/80">
+      <div>
+        <h3 class="text-xl font-bold text-white flex items-center gap-2">
+          <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          Configurar Recursos
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">Modificando instancia: <span id="modalEditVmName" class="font-mono text-blue-400 font-bold"></span></p>
+      </div>
+      <button type="button" id="closeEditBtn" class="text-slate-500 hover:text-white transition-colors focus:outline-none rounded-md p-1 hover:bg-slate-800">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+
+    <div class="p-6 space-y-8 overflow-y-auto max-h-[70vh]">
+      <input type="hidden" id="editVmId" />
+      <input type="hidden" id="editNode" />
+
+      <div class="space-y-5">
+        <h4 class="text-sm font-semibold text-white uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-2">
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+          Capacidad de Cómputo
+        </h4>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 bg-slate-950/50 p-5 rounded-xl border border-slate-800/50">
+          <div class="space-y-3">
+            <div class="flex justify-between items-end">
+              <label class="text-xs font-medium text-slate-400">vCPU Cores</label>
+              <span class="text-lg font-bold text-white font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-700" id="cpuValDisplay">2</span>
+            </div>
+            <input type="range" id="editCpu" min="1" max="16" step="1" class="w-full accent-blue-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer">
+            <div class="flex justify-between text-[10px] font-mono text-slate-500"><span>1</span><span>16</span></div>
+          </div>
+
+          <div class="space-y-3">
+            <div class="flex justify-between items-end">
+              <label class="text-xs font-medium text-slate-400">Memoria RAM</label>
+              <span class="text-lg font-bold text-white font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-700"><span id="ramValDisplay">2</span> <span class="text-xs text-slate-500">GB</span></span>
+            </div>
+            <input type="range" id="editRam" min="1" max="64" step="1" class="w-full accent-purple-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer">
+            <div class="flex justify-between text-[10px] font-mono text-slate-500"><span>1GB</span><span>64GB</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-5">
+        <h4 class="text-sm font-semibold text-white uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-2">
+          <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21 3.582 4 8 4s8-1.79 8-4"></path></svg>
+          Almacenamiento (Disco Raíz)
+        </h4>
+        <div class="bg-slate-950/50 p-5 rounded-xl border border-slate-800/50 space-y-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-2">Tamaño del Volumen (GB)</label>
+            <div class="relative w-48">
+              <input type="number" id="editDisk" min="1" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white text-sm font-mono focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all">
+              <span class="absolute right-4 top-2.5 text-xs text-slate-500 font-bold">GB</span>
+            </div>
+          </div>
+          <div class="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3 flex items-start gap-3 w-full">
+            <svg class="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            <p class="text-[12px] text-amber-500/90 leading-relaxed">
+              Cloud-Init expandirá automáticamente el filesystem al reiniciar. <strong class="text-amber-400">Importante:</strong> El disco solo puede expandirse, la API de Proxmox prohíbe reducirlo para evitar corrupción y pérdida de datos.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-5">
+        <h4 class="text-sm font-semibold text-white uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-2">
+          <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+          Seguridad Dinámica
+        </h4>
+        <div class="bg-slate-950/50 p-5 rounded-xl border border-slate-800/50">
+          <label class="flex justify-between items-end text-xs font-medium text-slate-400 mb-2">
+            <span>Inyectar Claves SSH Públicas</span>
+            <span class="text-[10px] text-slate-500">Separadas por saltos de línea</span>
+          </label>
+          <textarea id="editSsh" rows="3" placeholder="ssh-rsa AAAAB3NzaC1yc2E..." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-emerald-400 text-xs font-mono focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all resize-none"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="p-6 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-3 rounded-b-xl mt-auto">
+      <button type="button" id="cancelEditModalBtn" class="px-5 py-2.5 rounded-lg text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors">
+        Cancelar
+      </button>
+      <button type="submit" id="submitEditBtn" class="px-6 py-2.5 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors flex items-center gap-2 shadow-lg shadow-blue-900/20 group">
+        <svg class="w-4 h-4 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+        <span id="submitEditText">Aplicar Mutación con Terraform</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  import { apiFetch } from '../lib/api.ts';
+
+  const modal = document.getElementById('editResourceModal') as HTMLDialogElement;
+  const form = document.getElementById('editResourceForm') as HTMLFormElement;
+  const closeBtn = document.getElementById('closeEditBtn');
+  const cancelBtn = document.getElementById('cancelEditModalBtn');
+  
+  const vmNameDisplay = document.getElementById('modalEditVmName');
+  const cpuInput = document.getElementById('editCpu') as HTMLInputElement;
+  const cpuDisplay = document.getElementById('cpuValDisplay');
+  const ramInput = document.getElementById('editRam') as HTMLInputElement;
+  const ramDisplay = document.getElementById('ramValDisplay');
+  const diskInput = document.getElementById('editDisk') as HTMLInputElement;
+  
+  const submitBtn = document.getElementById('submitEditBtn') as HTMLButtonElement;
+  const submitText = document.getElementById('submitEditText');
+
+  cpuInput.addEventListener('input', (e) => cpuDisplay.innerText = (e.target as HTMLInputElement).value);
+  ramInput.addEventListener('input', (e) => ramDisplay.innerText = (e.target as HTMLInputElement).value);
+
+  window.openEditModal = (vmName, vmid, node, currentCpu, currentRamMb, currentDisk) => {
+    vmNameDisplay.innerText = vmName;
+    
+    cpuInput.value = currentCpu.toString();
+    cpuDisplay.innerText = currentCpu.toString();
+    
+    const currentRamGb = Math.max(1, Math.round(currentRamMb / 1024));
+    ramInput.value = currentRamGb.toString();
+    ramDisplay.innerText = currentRamGb.toString();
+    
+    diskInput.value = currentDisk.toString();
+    diskInput.min = currentDisk.toString();
+
+    modal.showModal();
+  };
+
+  const closeModal = () => modal.close();
+  closeBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const vmName = vmNameDisplay.innerText;
+    const payload = {
+      vm_cpu: parseInt(cpuInput.value),
+      vm_ram_mb: parseInt(ramInput.value) * 1024,
+      disk_size_gb: parseInt(diskInput.value),
+      ssh_keys: (document.getElementById('editSsh') as HTMLTextAreaElement).value
+    };
+
+    submitBtn.disabled = true;
+    submitText.innerHTML = `<span class="animate-spin inline-block">⚙️</span> Aplicando Mutación...`;
+
+    try {
+      const res = await apiFetch(`/deploy/${vmName}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Error interno en el servidor de Terraform");
+      }
+      
+      closeModal();
+      
+    } catch (error) {
+      alert("Error en la mutación: " + error.message);
+      submitBtn.disabled = false;
+      submitText.innerText = "Aplicar Mutación con Terraform";
+    }
+  });
+</script>

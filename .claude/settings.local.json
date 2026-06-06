@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(curl -s https://api.releases.hashicorp.com/v1/releases/terraform/latest)",
+      "Bash(chmod +x /opt/internal-developer-platform/docker-entrypoint.sh)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(curl -sv -X OPTIONS http://192.168.10.201:8000/api/auth/login -H 'Origin: http://192.168.10.201' -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: Content-Type')",
+      "Bash(docker exec idp-backend *)",
+      "Bash(curl -sv -X POST http://192.168.10.201:8000/api/auth/login -H 'Origin: http://192.168.10.201' -H 'Content-Type: application/json' -d '{\"username\":\"test\",\"realm\":\"pve\",\"password\":\"wrong\"}')",
+      "Bash(docker exec *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(docker compose *)",
+      "Bash(curl -s -o /dev/null -w 'CORS /admin/quotas: %{http_code}\\\\n' -X OPTIONS http://192.168.10.201:8000/api/admin/quotas -H 'Origin: http://192.168.10.201' -H 'Access-Control-Request-Method: GET')"
+    ]
+  }
+}

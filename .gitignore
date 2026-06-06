@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+
+# Terraform
+terraform/vm_base/.terraform/
+terraform/vm_base/terraform.tfstate
+terraform/vm_base/terraform.tfstate.backup
+terraform/vm_base/terraform.tfstate.d/
+terraform/vm_base/tfplan.cache
+
+# Node / Astro
+frontend/node_modules/
+frontend/dist/
+frontend/.astro/
+
+# Logs
+backend.log
+*.log

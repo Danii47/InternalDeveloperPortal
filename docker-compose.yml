@@ -1,0 +1,91 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Proxmox IDP — Production Compose
+#
+# Prerequisites (edit .env before first run):
+#   PROXMOX_URL, PROXMOX_TOKEN_ID, PROXMOX_SECRET_TOKEN, IDP_SECRET_KEY
+#   IDP_ALLOWED_ORIGIN=http://<your-server-ip>      ← port 80
+#   PUBLIC_API_URL=http://<your-server-ip>:8000/api ← browser → backend
+#
+# Launch:  docker compose up -d --build
+# Stop:    docker compose down
+# Logs:    docker compose logs -f
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── FastAPI + Terraform ─────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TERRAFORM_VERSION: "1.15.5"
+    image: idp-backend:latest
+    container_name: idp-backend
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    # All PROXMOX_*, IDP_* vars injected from .env into the container
+    env_file: .env
+    environment:
+      # Override TERRAFORM_DIR to the in-container bind-mount path
+      TERRAFORM_DIR: /app/terraform/vm_base
+      # SQLite lives in the persistent data directory
+      QUOTAS_DB_PATH: /app/data/quotas.db
+
+    volumes:
+      # Terraform config + ALL state (tfstate, tfstate.d, providers cache)
+      # Host path is relative to this docker-compose.yml file.
+      - ./terraform:/app/terraform
+      # SQLite quota database — plain directory bind-mount for easy backup
+      - ./data:/app/data
+
+    networks:
+      - idp_net
+
+    healthcheck:
+      # wget is installed in the backend image (used for Terraform download too)
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8000/docs"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+
+
+  # ── Astro SSR frontend ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # PUBLIC_API_URL is read from .env by Compose for variable substitution,
+        # then passed as a Docker build-arg and baked into client-side JS.
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000/api}
+    image: idp-frontend:latest
+    container_name: idp-frontend
+    restart: unless-stopped
+
+    ports:
+      - "80:4321"
+
+    environment:
+      # Runtime server-side URL — SSR routes call backend over Docker's internal network
+      BACKEND_URL: http://backend:8000
+      HOST: "0.0.0.0"
+      PORT: "4321"
+
+    networks:
+      - idp_net
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+
+# ── Networking ──────────────────────────────────────────────────────────────
+networks:
+  idp_net:
+    name: idp_internal
+    driver: bridge

@@ -1,0 +1,408 @@
+---
+---
+
+<dialog
+  id="snapshotModal"
+  class="bg-slate-900 text-slate-300 rounded-xl border border-slate-800 shadow-2xl p-0
+         backdrop:bg-black/70 backdrop:backdrop-blur-sm w-full max-w-2xl m-auto
+         open:animate-in open:fade-in-90 open:zoom-in-95"
+>
+  <div class="flex flex-col max-h-[85vh]">
+
+    <!-- Header -->
+    <div class="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/80 shrink-0">
+      <div>
+        <h3 class="text-xl font-bold text-white flex items-center gap-2">
+          <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+          Gestión de Snapshots
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">
+          Instancia: <span id="snapshotVmName" class="font-mono text-cyan-400 font-bold"></span>
+        </p>
+      </div>
+      <button
+        id="closeSnapshotBtn"
+        class="text-slate-500 hover:text-white transition-colors rounded-md p-1 hover:bg-slate-800 focus:outline-none"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Scrollable body -->
+    <div class="overflow-y-auto flex-1 p-6 space-y-6">
+
+      <!-- Banner (success / error / info) -->
+      <div id="snapBanner" class="hidden px-4 py-3 rounded-lg border text-sm">
+        <span id="snapBannerText"></span>
+      </div>
+
+      <!-- ── Create new snapshot ── -->
+      <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-5 space-y-4">
+        <h4 class="text-sm font-semibold text-white uppercase tracking-wider flex items-center gap-2">
+          <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          Crear nuevo snapshot
+        </h4>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">
+              Nombre <span class="text-slate-600">(letras, números, guiones — sin espacios)</span>
+            </label>
+            <input
+              type="text" id="snapNameInput"
+              placeholder="pre-upgrade-v2"
+              maxlength="40"
+              class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white
+                     font-mono focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 outline-none transition-all
+                     placeholder:text-slate-600"
+            />
+            <p id="snapNameError" class="hidden text-[11px] text-red-400 mt-1"></p>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">Descripción (opcional)</label>
+            <input
+              type="text" id="snapDescInput"
+              placeholder="Antes de aplicar parches del SO..."
+              class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white
+                     focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 outline-none transition-all
+                     placeholder:text-slate-600"
+            />
+          </div>
+        </div>
+
+        <div class="flex justify-end">
+          <button
+            id="createSnapshotBtn"
+            class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-cyan-600 hover:bg-cyan-500
+                   disabled:bg-slate-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors
+                   shadow-lg shadow-cyan-900/20"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+            </svg>
+            <span id="createBtnText">Crear Snapshot</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Snapshot list ── -->
+      <div>
+        <h4 class="text-sm font-semibold text-white uppercase tracking-wider flex items-center gap-2 mb-3">
+          <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+          </svg>
+          Snapshots existentes
+          <span id="snapCount" class="text-slate-500 font-normal normal-case tracking-normal"></span>
+        </h4>
+
+        <!-- Loading -->
+        <div id="snapLoading" class="flex items-center justify-center py-10 text-slate-400 gap-3">
+          <svg class="w-5 h-5 animate-spin text-cyan-500" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+          </svg>
+          <span class="text-sm">Cargando snapshots...</span>
+        </div>
+
+        <!-- Empty state -->
+        <div id="snapEmpty" class="hidden flex flex-col items-center justify-center py-10 text-slate-500 gap-2">
+          <svg class="w-10 h-10 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+          </svg>
+          <p class="text-sm">Esta VM no tiene snapshots todavía.</p>
+          <p class="text-xs text-slate-600">Crea uno con el formulario de arriba.</p>
+        </div>
+
+        <!-- Table -->
+        <div id="snapTable" class="hidden border border-slate-800 rounded-xl overflow-hidden">
+          <table class="w-full text-left text-sm border-collapse">
+            <thead class="bg-slate-950/70">
+              <tr>
+                <th class="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Nombre / Descripción</th>
+                <th class="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Fecha</th>
+                <th class="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">RAM</th>
+                <th class="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="snapTableBody" class="divide-y divide-slate-800/50"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- end scrollable body -->
+  </div>
+</dialog>
+
+<script>
+  import { apiFetch } from '@/lib/api.ts';
+
+  // ── DOM refs ──────────────────────────────────────────────────────────
+  const modal        = document.getElementById('snapshotModal') as HTMLDialogElement;
+  const closeBtn     = document.getElementById('closeSnapshotBtn') as HTMLButtonElement;
+  const vmNameEl     = document.getElementById('snapshotVmName') as HTMLElement;
+  const banner       = document.getElementById('snapBanner') as HTMLElement;
+  const bannerText   = document.getElementById('snapBannerText') as HTMLElement;
+  const snapLoading  = document.getElementById('snapLoading') as HTMLElement;
+  const snapEmpty    = document.getElementById('snapEmpty') as HTMLElement;
+  const snapTable    = document.getElementById('snapTable') as HTMLElement;
+  const snapTableBody= document.getElementById('snapTableBody') as HTMLElement;
+  const snapCount    = document.getElementById('snapCount') as HTMLElement;
+  const nameInput    = document.getElementById('snapNameInput') as HTMLInputElement;
+  const descInput    = document.getElementById('snapDescInput') as HTMLInputElement;
+  const nameError    = document.getElementById('snapNameError') as HTMLElement;
+  const createBtn    = document.getElementById('createSnapshotBtn') as HTMLButtonElement;
+  const createBtnText= document.getElementById('createBtnText') as HTMLElement;
+
+  // ── State ─────────────────────────────────────────────────────────────
+  let currentVmid: number | null = null;
+  let currentNode: string | null = null;
+  let currentVmName: string | null = null;
+
+  // ── Public opener (called from ResourceRow) ───────────────────────────
+  (window as any).openSnapshotModal = (vmName: string, vmid: number, node: string) => {
+    currentVmName = vmName;
+    currentVmid   = vmid;
+    currentNode   = node;
+    vmNameEl.textContent = vmName;
+    nameInput.value = '';
+    descInput.value = '';
+    hideBanner();
+    hideNameError();
+    modal.showModal();
+    loadSnapshots();
+  };
+
+  closeBtn.addEventListener('click', () => modal.close());
+
+  // ── Banner helpers ────────────────────────────────────────────────────
+  function showBanner(msg: string, type: 'success' | 'error' | 'info' = 'info') {
+    const palette: Record<string, string> = {
+      success: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400',
+      error:   'bg-red-500/10 border-red-500/30 text-red-400',
+      info:    'bg-cyan-500/10 border-cyan-500/30 text-cyan-400',
+    };
+    banner.className = `px-4 py-3 rounded-lg border text-sm ${palette[type]}`;
+    bannerText.textContent = msg;
+    banner.classList.remove('hidden');
+  }
+  function hideBanner() { banner.classList.add('hidden'); }
+
+  // ── Name validation ───────────────────────────────────────────────────
+  const SNAPNAME_RE = /^[a-zA-Z0-9_\-]{1,40}$/;
+  function showNameError(msg: string) {
+    nameError.textContent = msg;
+    nameError.classList.remove('hidden');
+    nameInput.classList.add('border-red-500');
+  }
+  function hideNameError() {
+    nameError.classList.add('hidden');
+    nameInput.classList.remove('border-red-500');
+  }
+
+  // ── Date formatter ────────────────────────────────────────────────────
+  function formatDate(ts: number | null): string {
+    if (!ts) return '—';
+    return new Date(ts * 1000).toLocaleString('es-ES', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+
+  // ── Load & render snapshot list ───────────────────────────────────────
+  async function loadSnapshots() {
+    snapLoading.classList.remove('hidden');
+    snapEmpty.classList.add('hidden');
+    snapTable.classList.add('hidden');
+    snapCount.textContent = '';
+
+    try {
+      const res = await apiFetch(`/vms/${currentNode}/${currentVmid}/snapshots`);
+      snapLoading.classList.add('hidden');
+
+      if (!res.ok) {
+        showBanner('No se pudo cargar la lista de snapshots.', 'error');
+        return;
+      }
+
+      const snaps: any[] = await res.json();
+      snapCount.textContent = `(${snaps.length})`;
+
+      if (snaps.length === 0) {
+        snapEmpty.classList.remove('hidden');
+        return;
+      }
+
+      renderSnapshotRows(snaps);
+      snapTable.classList.remove('hidden');
+    } catch {
+      snapLoading.classList.add('hidden');
+      showBanner('Error de conexión al obtener los snapshots.', 'error');
+    }
+  }
+
+  function renderSnapshotRows(snaps: any[]) {
+    snapTableBody.innerHTML = snaps.map(s => `
+      <tr class="hover:bg-slate-800/20 transition-colors">
+        <td class="px-4 py-3">
+          <div class="font-mono text-sm text-white">${escHtml(s.name)}</div>
+          ${s.description
+            ? `<div class="text-[11px] text-slate-500 mt-0.5 truncate max-w-[200px]" title="${escHtml(s.description)}">${escHtml(s.description)}</div>`
+            : ''}
+        </td>
+        <td class="px-4 py-3 text-[12px] text-slate-400 whitespace-nowrap">${formatDate(s.snaptime)}</td>
+        <td class="px-4 py-3 text-center">
+          ${s.vmstate
+            ? `<span class="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-1.5 py-0.5 rounded font-bold">RAM</span>`
+            : `<span class="text-[10px] text-slate-700">—</span>`}
+        </td>
+        <td class="px-4 py-3">
+          <div class="flex justify-end gap-1.5">
+            <button
+              data-action="rollback" data-snapname="${escHtml(s.name)}"
+              class="snap-btn px-2.5 py-1.5 text-[11px] font-semibold rounded-lg transition-colors
+                     bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20"
+              title="Restaurar VM a este punto"
+            >Restaurar</button>
+            <button
+              data-action="delete" data-snapname="${escHtml(s.name)}"
+              class="snap-btn px-2.5 py-1.5 text-[11px] font-semibold rounded-lg transition-colors
+                     bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20"
+              title="Borrar este snapshot"
+            >Borrar</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function escHtml(str: string): string {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Event delegation for rollback / delete ────────────────────────────
+  snapTableBody.addEventListener('click', async (e: Event) => {
+    const btn = (e.target as HTMLElement).closest('[data-action]') as HTMLButtonElement | null;
+    if (!btn || btn.disabled) return;
+
+    const action   = btn.dataset.action as 'rollback' | 'delete';
+    const snapname = btn.dataset.snapname!;
+
+    if (action === 'rollback') {
+      const confirmed = confirm(
+        `¿Restaurar "${currentVmName}" al snapshot "${snapname}"?\n\n` +
+        `Todos los cambios posteriores a ese punto se perderán.\n` +
+        `La VM debe estar APAGADA para que la restauración sea completa.`
+      );
+      if (!confirmed) return;
+
+      btn.disabled = true;
+      btn.textContent = '...';
+      hideBanner();
+
+      try {
+        const res = await apiFetch(
+          `/vms/${currentNode}/${currentVmid}/snapshots/${encodeURIComponent(snapname)}/rollback`,
+          { method: 'POST' }
+        );
+        if (res.ok) {
+          showBanner(`Restauración de "${snapname}" encolada. Revisa el terminal de tareas.`, 'success');
+        } else {
+          const err = await res.json().catch(() => ({}));
+          showBanner(err.detail || 'Error al encolar la restauración.', 'error');
+          btn.disabled = false;
+          btn.textContent = 'Restaurar';
+        }
+      } catch {
+        showBanner('Error de conexión.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Restaurar';
+      }
+
+    } else if (action === 'delete') {
+      const confirmed = confirm(`¿Borrar el snapshot "${snapname}"?\n\nEsta acción es irreversible.`);
+      if (!confirmed) return;
+
+      btn.disabled = true;
+      btn.textContent = '...';
+      hideBanner();
+
+      try {
+        const res = await apiFetch(
+          `/vms/${currentNode}/${currentVmid}/snapshots/${encodeURIComponent(snapname)}`,
+          { method: 'DELETE' }
+        );
+        if (res.ok) {
+          showBanner(`Borrado de "${snapname}" encolado. La lista se actualizará en breve.`, 'info');
+          // Refresh after a short delay to give the task time to complete
+          setTimeout(loadSnapshots, 4000);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          showBanner(err.detail || 'Error al encolar el borrado.', 'error');
+          btn.disabled = false;
+          btn.textContent = 'Borrar';
+        }
+      } catch {
+        showBanner('Error de conexión.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Borrar';
+      }
+    }
+  });
+
+  // ── Create snapshot ───────────────────────────────────────────────────
+  createBtn.addEventListener('click', async () => {
+    hideNameError();
+    hideBanner();
+
+    const snapname = nameInput.value.trim();
+    const description = descInput.value.trim();
+
+    if (!SNAPNAME_RE.test(snapname)) {
+      showNameError('Solo letras, números, guiones y guiones bajos (máx. 40 caracteres, sin espacios).');
+      nameInput.focus();
+      return;
+    }
+
+    createBtn.disabled = true;
+    createBtnText.innerHTML = '<span class="animate-pulse">Encolando...</span>';
+
+    try {
+      const res = await apiFetch(
+        `/vms/${currentNode}/${currentVmid}/snapshots`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ snapname, description }),
+        }
+      );
+
+      if (res.ok) {
+        showBanner(`Snapshot "${snapname}" encolado correctamente. Revisa el terminal de tareas.`, 'success');
+        nameInput.value = '';
+        descInput.value = '';
+        // Refresh list after a reasonable delay for the task to complete
+        setTimeout(loadSnapshots, 5000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showBanner(err.detail || 'Error al crear el snapshot.', 'error');
+      }
+    } catch {
+      showBanner('Error de conexión al crear el snapshot.', 'error');
+    } finally {
+      createBtn.disabled = false;
+      createBtnText.textContent = 'Crear Snapshot';
+    }
+  });
+</script>

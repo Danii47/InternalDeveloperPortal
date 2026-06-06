@@ -1,0 +1,206 @@
+---
+// Rendered only for admin users (checked in parent page via Astro.locals.user.realm)
+---
+
+<div class="bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden mt-8">
+  <div class="bg-slate-950/70 border-b border-slate-800 px-5 py-3 flex items-center justify-between">
+    <h2 class="text-sm font-semibold text-white flex items-center gap-2">
+      <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+      Administración de Cuotas
+      <span class="text-xs font-normal text-slate-500">(solo admins)</span>
+    </h2>
+    <button id="adminQuotasRefresh"
+      class="text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded border border-slate-700 transition-all flex items-center gap-1">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+      Refrescar
+    </button>
+  </div>
+
+  <div id="adminQuotasLoading" class="px-5 py-8 text-center text-slate-500 text-sm">
+    Cargando pools…
+  </div>
+
+  <div id="adminQuotasTable" class="hidden overflow-x-auto">
+    <table class="w-full text-sm text-left">
+      <thead>
+        <tr class="border-b border-slate-800 bg-slate-950/30 text-xs text-slate-500 uppercase tracking-wider">
+          <th class="px-4 py-3">Pool</th>
+          <th class="px-4 py-3 text-center">CPU usado / máx</th>
+          <th class="px-4 py-3 text-center">RAM usada / máx</th>
+          <th class="px-4 py-3 text-center">Disco usado / máx</th>
+          <th class="px-4 py-3 text-center">Acción</th>
+        </tr>
+      </thead>
+      <tbody id="adminQuotasTbody" class="divide-y divide-slate-800/60">
+      </tbody>
+    </table>
+  </div>
+
+  <div id="adminQuotasEmpty" class="hidden px-5 py-8 text-center text-slate-500 text-sm">
+    No hay pools en el clúster.
+  </div>
+</div>
+
+<!-- Save-feedback toast -->
+<div id="quotaSaveToast"
+  class="fixed bottom-6 right-6 z-50 hidden bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm font-medium shadow-2xl transition-all">
+</div>
+
+<script>
+  import { apiFetch } from '../lib/api.ts';
+
+  const tbody = document.getElementById('adminQuotasTbody')!;
+  const loadingEl = document.getElementById('adminQuotasLoading')!;
+  const tableEl = document.getElementById('adminQuotasTable')!;
+  const emptyEl = document.getElementById('adminQuotasEmpty')!;
+  const toast = document.getElementById('quotaSaveToast')!;
+
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showToast(msg: string, ok: boolean) {
+    toast.textContent = msg;
+    toast.className = `fixed bottom-6 right-6 z-50 bg-slate-800 border rounded-xl px-4 py-3 text-sm font-medium shadow-2xl transition-all ${
+      ok ? 'border-emerald-600 text-emerald-300' : 'border-red-600 text-red-300'
+    }`;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.classList.add('hidden'); }, 3000);
+  }
+
+  function _pct(used: number, max: number): string {
+    if (max <= 0) return '0%';
+    return `${Math.min(100, Math.round((used / max) * 100))}%`;
+  }
+
+  function _barCls(used: number, max: number): string {
+    const p = max > 0 ? (used / max) * 100 : 0;
+    if (p >= 90) return 'bg-red-500';
+    if (p >= 75) return 'bg-orange-400';
+    return 'bg-emerald-500';
+  }
+
+  function _fmtRam(mb: number): string {
+    return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
+  }
+
+  function buildRow(entry: any): HTMLTableRowElement {
+    const { pool_name, quota, usage } = entry;
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-slate-800/30 transition-colors';
+    tr.dataset.pool = pool_name;
+
+    tr.innerHTML = `
+      <td class="px-4 py-3 font-mono text-xs text-blue-300">${pool_name}</td>
+
+      <td class="px-4 py-3">
+        <div class="flex flex-col items-center gap-1">
+          <span class="text-xs text-slate-300">${usage.cpu} / <input data-field="max_cpu" type="number" min="1" value="${quota.max_cpu}"
+            class="w-14 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-center text-white text-xs focus:ring-1 focus:ring-blue-500 outline-none"> vCPU</span>
+          <div class="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+            <div class="h-full rounded-full ${_barCls(usage.cpu, quota.max_cpu)}" style="width:${_pct(usage.cpu, quota.max_cpu)}"></div>
+          </div>
+        </div>
+      </td>
+
+      <td class="px-4 py-3">
+        <div class="flex flex-col items-center gap-1">
+          <span class="text-xs text-slate-300">${_fmtRam(usage.ram_mb)} / <input data-field="max_ram_mb" type="number" min="1" value="${quota.max_ram_mb}"
+            class="w-20 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-center text-white text-xs focus:ring-1 focus:ring-blue-500 outline-none"> MB</span>
+          <div class="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+            <div class="h-full rounded-full ${_barCls(usage.ram_mb, quota.max_ram_mb)}" style="width:${_pct(usage.ram_mb, quota.max_ram_mb)}"></div>
+          </div>
+        </div>
+      </td>
+
+      <td class="px-4 py-3">
+        <div class="flex flex-col items-center gap-1">
+          <span class="text-xs text-slate-300">${usage.disk_gb.toFixed(1)} / <input data-field="max_disk_gb" type="number" min="1" value="${quota.max_disk_gb}"
+            class="w-16 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-center text-white text-xs focus:ring-1 focus:ring-blue-500 outline-none"> GB</span>
+          <div class="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+            <div class="h-full rounded-full ${_barCls(usage.disk_gb, quota.max_disk_gb)}" style="width:${_pct(usage.disk_gb, quota.max_disk_gb)}"></div>
+          </div>
+        </div>
+      </td>
+
+      <td class="px-4 py-3 text-center">
+        <button data-save="${pool_name}"
+          class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors font-medium">
+          Guardar
+        </button>
+      </td>
+    `;
+    return tr;
+  }
+
+  async function loadQuotas() {
+    loadingEl.classList.remove('hidden');
+    tableEl.classList.add('hidden');
+    emptyEl.classList.add('hidden');
+    try {
+      const res = await apiFetch('/admin/quotas');
+      if (!res.ok) return;
+      const data: any[] = await res.json();
+
+      loadingEl.classList.add('hidden');
+      if (data.length === 0) {
+        emptyEl.classList.remove('hidden');
+        return;
+      }
+      tbody.innerHTML = '';
+      data.forEach(entry => tbody.appendChild(buildRow(entry)));
+      tableEl.classList.remove('hidden');
+    } catch (_) {
+      loadingEl.classList.add('hidden');
+    }
+  }
+
+  tbody.addEventListener('click', async (e) => {
+    const btn = (e.target as HTMLElement).closest('[data-save]') as HTMLElement | null;
+    if (!btn) return;
+
+    const poolName = btn.dataset.save!;
+    const row = tbody.querySelector(`tr[data-pool="${poolName}"]`) as HTMLTableRowElement;
+    if (!row) return;
+
+    const max_cpu = parseInt((row.querySelector('[data-field="max_cpu"]') as HTMLInputElement).value);
+    const max_ram_mb = parseInt((row.querySelector('[data-field="max_ram_mb"]') as HTMLInputElement).value);
+    const max_disk_gb = parseInt((row.querySelector('[data-field="max_disk_gb"]') as HTMLInputElement).value);
+
+    if ([max_cpu, max_ram_mb, max_disk_gb].some(v => isNaN(v) || v <= 0)) {
+      showToast('Valores inválidos: todos los límites deben ser > 0', false);
+      return;
+    }
+
+    btn.textContent = '...';
+    btn.setAttribute('disabled', 'true');
+
+    try {
+      const res = await apiFetch(`/admin/quotas/${encodeURIComponent(poolName)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_cpu, max_ram_mb, max_disk_gb }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Cuota de '${poolName}' guardada`, true);
+      } else {
+        showToast(data.detail ?? 'Error al guardar', false);
+      }
+    } catch (_) {
+      showToast('Error de red', false);
+    } finally {
+      btn.textContent = 'Guardar';
+      btn.removeAttribute('disabled');
+    }
+  });
+
+  document.getElementById('adminQuotasRefresh')!.addEventListener('click', loadQuotas);
+
+  loadQuotas();
+</script>

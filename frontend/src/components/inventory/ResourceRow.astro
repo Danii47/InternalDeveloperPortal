@@ -1,0 +1,251 @@
+---
+const { vm } = Astro.props;
+
+const isRunning = vm.status === 'running';
+const statusColor = isRunning ? 'bg-emerald-500' : 'bg-slate-600';
+const statusText = vm.status.charAt(0).toUpperCase() + vm.status.slice(1);
+
+const ramDisplay = vm.ram_mb >= 1024 ? (vm.ram_mb / 1024).toFixed(0) + ' GB' : vm.ram_mb + ' MB';
+const diskDisplay = vm.disk_gb ? vm.disk_gb.toFixed(0) + ' GB' : 'N/A';
+
+const sockets = vm.sockets || 1;
+const cores = vm.cpu || 1;
+
+const networkInfo = vm.networks && vm.networks.length > 0
+  ? vm.networks.map((n: any) => `${n.bridge}`).join(', ')
+  : "Unknown";
+
+const ttlExpires = vm.ttl_expires_at ?? null;
+---
+
+<tr class="hover:bg-slate-800/30 transition-colors group/row">
+  <td class="px-6 py-4 font-mono text-sm text-slate-500">{vm.vmid}</td>
+  
+  <td class="px-6 py-4">
+    <div class="font-semibold text-white">{vm.name}</div>
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold mt-1">QEMU Instance</div>
+    {vm.managed && vm.template_name && (
+      <div class="flex items-center gap-1 mt-1.5" title={`Clonada desde: ${vm.template_name}`}>
+        <svg class="w-3 h-3 text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/>
+        </svg>
+        <span class="text-[10px] text-slate-600 font-mono truncate max-w-[160px]">{vm.template_name}</span>
+      </div>
+    )}
+  </td>
+
+  <td class="px-6 py-4">
+    <div class="flex items-center gap-2">
+      <div class="w-1.5 h-1.5 rounded-full bg-blue-500/50"></div>
+      <span class="text-sm text-slate-300 font-medium">{vm.node}</span>
+    </div>
+  </td>
+
+  <td class="px-6 py-4">
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center gap-4 text-[11px]">
+        <span class="flex items-center gap-1.5 text-slate-300 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50" title="CPUs y Sockets">
+          <svg class="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+          {cores} Cores <span class="text-slate-500">/</span> {sockets} Sockets
+        </span>
+        <span class="flex items-center gap-1.5 text-slate-300 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50" title="Memoria RAM">
+          <svg class="w-3 h-3 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+          {ramDisplay}
+        </span>
+      </div>
+
+      <div class="flex items-center gap-4 text-[11px]">
+        <span class="flex items-center gap-1.5 text-slate-300 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50" title="Disco Duro">
+          <svg class="w-3 h-3 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21 3.582 4 8 4s8-1.79 8-4"></path></svg>
+          {diskDisplay}
+        </span>
+        <span class="flex items-center gap-1.5 text-slate-300 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50" title="Configuración de Red">
+          <svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
+          Net: <span class="text-emerald-400 font-mono">{networkInfo}</span>
+        </span>
+      </div>
+    </div>
+  </td>
+
+  <!-- ── Live metrics column — bars updated by resources.astro polling script ── -->
+  <td class="px-4 py-4" data-vmid-metrics={vm.vmid}>
+    <div class="space-y-2.5 w-[148px]">
+
+      <!-- CPU -->
+      <div>
+        <div class="flex justify-between items-center mb-1">
+          <span class="text-[10px] text-slate-500 font-semibold uppercase tracking-widest">CPU</span>
+          <span class="m-cpu-label text-[10px] font-mono text-slate-500">—</span>
+        </div>
+        <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div
+            class="m-cpu-bar h-full rounded-full bg-slate-700 transition-all duration-700 ease-out"
+            style="width:0%"
+          ></div>
+        </div>
+      </div>
+
+      <!-- RAM -->
+      <div>
+        <div class="flex justify-between items-center mb-1">
+          <span class="text-[10px] text-slate-500 font-semibold uppercase tracking-widest">RAM</span>
+          <span class="m-ram-label text-[10px] font-mono text-slate-500">
+            {isRunning ? '—' : 'Offline'}
+          </span>
+        </div>
+        <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div
+            class="m-ram-bar h-full rounded-full bg-slate-700 transition-all duration-700 ease-out"
+            style="width:0%"
+          ></div>
+        </div>
+      </div>
+
+    </div>
+  </td>
+
+  <td class="px-6 py-4">
+    <div class="flex flex-col items-center gap-1">
+      <div class="flex items-center gap-2">
+        <span class="relative flex h-2 w-2">
+          {isRunning && <span class={`animate-ping absolute inline-flex h-full w-full rounded-full ${statusColor} opacity-75`}></span>}
+          <span class={`relative inline-flex rounded-full h-2 w-2 ${statusColor}`}></span>
+        </span>
+        <span class={`text-xs font-bold ${isRunning ? 'text-emerald-400' : 'text-slate-500'}`}>{statusText}</span>
+      </div>
+    </div>
+  </td>
+
+  <td class="px-6 py-4 text-center">
+    <div class="flex flex-col items-center gap-2">
+      {vm.managed ? (
+        <span class="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2 py-1 rounded border border-blue-500/20 uppercase tracking-tighter shadow-sm shadow-blue-900/20">Managed</span>
+      ) : (
+        <span class="bg-slate-800 text-slate-500 text-[10px] font-bold px-2 py-1 rounded border border-slate-700 uppercase tracking-tighter">Manual</span>
+      )}
+
+      {ttlExpires ? (
+        <span
+          data-ttl-expires={ttlExpires}
+          title="Tiempo restante antes de la autodestrucción"
+          class="ttl-badge text-[10px] font-bold px-2 py-1 rounded border uppercase tracking-tighter inline-flex items-center gap-1 bg-slate-800 text-slate-500 border-slate-700"
+        >
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          <span class="ttl-text">—</span>
+        </span>
+      ) : vm.managed ? (
+        <span class="text-[10px] font-bold px-2 py-1 rounded border border-slate-700 bg-slate-800/60 text-slate-500 uppercase tracking-tighter inline-flex items-center gap-1" title="Máquina persistente — sin autodestrucción">
+          <span>♾</span> Persistente
+        </span>
+      ) : null}
+    </div>
+  </td>
+
+  <td class="px-6 py-4 text-right">
+    <div class="flex justify-end gap-2 opacity-30 group-hover/row:opacity-100 transition-opacity relative">
+      <div class="relative group/dropdown">
+        <button class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg border border-slate-700 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/50" title="Opciones">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path></svg>
+        </button>
+
+        <div class="absolute right-0 top-full mt-1 w-56 origin-top-right bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/dropdown:opacity-100 group-hover/dropdown:visible transition-all duration-200 z-50 overflow-hidden">
+          <div class="py-1">
+
+            {vm.managed ? (
+              <>
+                {/* ── Opciones exclusivas de VMs Managed (requieren Terraform state) ── */}
+                <button onclick={`openEditModal('${vm.name}', ${vm.vmid}, '${vm.node}', ${cores}, ${vm.ram_mb}, ${vm.disk_gb || 20})`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+                  <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                  Configurar Recursos
+                </button>
+
+                <button onclick={`openAuditModal('${vm.name}', ${cores}, ${vm.ram_mb}, ${vm.disk_gb || 20})`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+                  <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                  Auditoría de Estado
+                </button>
+
+                <button onclick={`openReprovisionModal('${vm.name}', ${vm.vmid}, '${vm.node}')`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+                  <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                  Reprovisionar SO
+                </button>
+
+                <hr class="border-slate-800 my-1" />
+
+                <div class="px-4 py-1 text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Ciclo de Vida (TTL)</div>
+                <button onclick={`handleRenewTTL(${vm.vmid}, 24)`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+                  <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                  Renovar · 24 horas
+                </button>
+                <button onclick={`handleRenewTTL(${vm.vmid}, 168)`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+                  <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                  Renovar · 7 días
+                </button>
+                <button onclick={`handleRenewTTL(${vm.vmid}, 720)`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+                  <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                  Renovar · 30 días
+                </button>
+                <button onclick={`handleRenewTTL(${vm.vmid}, null)`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+                  <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                  Hacer permanente
+                </button>
+
+                <hr class="border-slate-800 my-1" />
+
+                <button onclick={`handleDestroy('${vm.name}', ${vm.vmid}, '${vm.node}')`} class="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-900/30 flex items-center gap-3 transition-colors">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  Destruir Recurso
+                </button>
+
+                <hr class="border-slate-800 my-1" />
+              </>
+            ) : (
+              <>
+                <div class="px-4 py-2 text-[10px] text-slate-600 uppercase tracking-wider font-semibold">
+                  VM Manual
+                </div>
+                <button
+                  onclick={`openAdoptModal('${vm.name}', ${vm.vmid}, '${vm.node}')`}
+                  class="w-full text-left px-4 py-2.5 text-sm text-violet-400 hover:bg-violet-900/20 flex items-center gap-3 transition-colors"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                  </svg>
+                  Adoptar VM al IDP
+                </button>
+                <hr class="border-slate-800 my-1" />
+              </>
+            )}
+
+            {/* ── Opciones disponibles para TODAS las VMs (API directa a Proxmox) ── */}
+            <button onclick={`openConsoleModal('${vm.name}', ${vm.vmid}, '${vm.node}')`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+              <svg class="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+              Consola Web
+            </button>
+
+            <button onclick={`openSnapshotModal('${vm.name}', ${vm.vmid}, '${vm.node}')`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-3 transition-colors">
+              <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+              Snapshots
+            </button>
+
+            <hr class="border-slate-800 my-1" />
+
+            {isRunning ? (
+              <button onclick={`handleAction('stop', ${vm.vmid}, '${vm.node}')`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-orange-900/30 hover:text-orange-400 flex items-center gap-3 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path></svg>
+                Apagar Máquina
+              </button>
+            ) : (
+              <button onclick={`handleAction('start', ${vm.vmid}, '${vm.node}')`} class="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-emerald-900/30 hover:text-emerald-400 flex items-center gap-3 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                Encender Máquina
+              </button>
+            )}
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </td>
+</tr>

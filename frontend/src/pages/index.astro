@@ -1,0 +1,604 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+const sectionHead = "text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2 border-b border-slate-800 pb-2";
+const labelCls = "block text-xs font-medium text-slate-400 mb-1";
+const inputCls = "w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all";
+const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed";
+---
+
+<Layout title="Dashboard | Proxmox IDP">
+  <div class="mb-4 flex items-end justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold text-white">Provisionamiento de Infraestructura</h1>
+      <p class="text-sm text-slate-400">Despliega máquinas virtuales con aprovisionamiento automatizado vía Terraform.</p>
+    </div>
+    <a href="/quotas" class="hidden sm:flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-blue-400 bg-slate-900 hover:bg-slate-800 px-3 py-2 rounded-lg border border-slate-800 transition-all">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+      Ver cuota del pool
+    </a>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6 items-start">
+    <!-- ── Formulario (2 columnas internas) ───────────────────────────────── -->
+    <form id="deployForm" class="lg:col-span-2 xl:col-span-3 bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+
+      <!-- Catálogo de aplicaciones (ancho completo) -->
+      <section class="mb-5">
+        <h3 class={sectionHead}>
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2"></path></svg>
+          Catálogo de Aplicaciones
+          <span class="ml-auto normal-case tracking-normal font-normal text-[11px] text-slate-500">Opcional · se instalan al arrancar (multiselección)</span>
+        </h3>
+        <div id="toolCatalog" class="space-y-3 max-h-52 overflow-y-auto pr-1">
+          <div class="text-sm text-slate-500 py-3 text-center">Cargando catálogo…</div>
+        </div>
+      </section>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+        <!-- ── Columna izquierda ── -->
+        <div class="space-y-5">
+          <section>
+            <h3 class={sectionHead}>
+              <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"></path></svg>
+              Ubicación y Plantilla
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class={labelCls}>Nodo Proxmox</label>
+                <select id="nodeSelect" required class={selectCls}><option value="">Cargando nodos...</option></select>
+              </div>
+              <div>
+                <label class={labelCls}>Plantilla OS</label>
+                <select id="templateSelect" required disabled class={selectCls}><option value="">Selecciona un nodo primero</option></select>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 class={sectionHead}>
+              <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+              Dimensionamiento
+            </h3>
+            <div class="grid grid-cols-3 gap-3 mb-3">
+              <div>
+                <label class={labelCls}>Nombre Base</label>
+                <input type="text" id="vmName" required placeholder="srv-web" class={inputCls}>
+              </div>
+              <div>
+                <label class={labelCls}>Instancias</label>
+                <input type="number" id="instances" min="1" max="20" value="1" class={inputCls}>
+              </div>
+              <div>
+                <label class={labelCls}>ID Inicial</label>
+                <input type="number" id="startId" required class={inputCls}>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1 flex justify-between">CPU <span id="cpuVal" class="text-blue-400">2</span></label>
+                <input type="range" id="cpuRange" min="1" max="16" value="2" class="w-full accent-blue-500">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1 flex justify-between">RAM <span id="ramVal" class="text-blue-400">2 GB</span></label>
+                <input type="range" id="ramRange" min="1" max="64" value="2" class="w-full accent-blue-500">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1 flex justify-between">Disco <span id="diskVal" class="text-blue-400">20 GB</span></label>
+                <input type="range" id="diskRange" min="10" max="500" step="10" value="20" class="w-full accent-blue-500">
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 class={sectionHead}>
+              <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"></path></svg>
+              DNS y Acceso SSH
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class={labelCls}>Servidores DNS (coma)</label>
+                <input type="text" id="dnsInput" placeholder="1.1.1.1, 8.8.8.8" class={inputCls}>
+              </div>
+              <div>
+                <label class={labelCls}>Dominio de búsqueda</label>
+                <input type="text" id="dnsDomainInput" placeholder="midominio.local" class={inputCls}>
+              </div>
+            </div>
+            <div class="mt-3">
+              <label class={labelCls}>Clave(s) SSH pública(s)</label>
+              <textarea id="sshKeys" rows="2" placeholder="ssh-ed25519 AAAA... usuario@host (una por línea)" class={inputCls + " font-mono text-xs resize-y"}></textarea>
+            </div>
+          </section>
+        </div>
+
+        <!-- ── Columna derecha ── -->
+        <div class="space-y-5">
+          <section>
+            <h3 class={sectionHead}>
+              <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+              Red y Seguridad
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+              <div>
+                <label class={labelCls}>Red (Bridge/VNet)</label>
+                <select id="networkSelect" required disabled class={selectCls}><option value="">Selecciona un nodo primero</option></select>
+              </div>
+              <div>
+                <label class={labelCls}>Usuario</label>
+                <input type="text" id="adminUser" required value="root" class={inputCls}>
+              </div>
+              <div>
+                <label class={labelCls}>Contraseña</label>
+                <input type="password" id="adminPassword" required placeholder="••••••••" class={inputCls}>
+              </div>
+            </div>
+            <div class="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+              <div class="flex items-center gap-6 mb-3">
+                <label class="flex items-center gap-2 text-sm text-white cursor-pointer">
+                  <input type="radio" name="ipMode" value="DHCP" checked class="text-blue-500 focus:ring-blue-500 bg-slate-900 border-slate-700">
+                  DHCP Automático
+                </label>
+                <label class="flex items-center gap-2 text-sm text-white cursor-pointer">
+                  <input type="radio" name="ipMode" value="Static" class="text-blue-500 focus:ring-blue-500 bg-slate-900 border-slate-700">
+                  IP Estática
+                </label>
+              </div>
+              <div id="staticIpFields" class="hidden grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class={labelCls}>Dirección IP (CIDR)</label>
+                  <input type="text" id="ipInput" placeholder="192.168.10.50/24" class={inputCls}>
+                </div>
+                <div>
+                  <label class={labelCls}>Puerta de Enlace</label>
+                  <input type="text" id="gatewayInput" placeholder="192.168.10.1" class={inputCls}>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 class={sectionHead}>
+              <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+              Ciclo de Vida (TTL)
+            </h3>
+            <input type="hidden" id="ttlHours" value="24">
+            <div class="grid grid-cols-3 sm:grid-cols-5 gap-2" id="ttlPills">
+              <button type="button" data-ttl="24" class="ttl-pill bg-slate-950/60 border border-slate-800 rounded-lg px-2 py-2.5 text-xs text-slate-300 cursor-pointer transition-all hover:border-slate-600 text-center leading-tight"><span class="block text-base mb-0.5">⏱</span>24 h</button>
+              <button type="button" data-ttl="168" class="ttl-pill bg-slate-950/60 border border-slate-800 rounded-lg px-2 py-2.5 text-xs text-slate-300 cursor-pointer transition-all hover:border-slate-600 text-center leading-tight"><span class="block text-base mb-0.5">📅</span>7 días</button>
+              <button type="button" data-ttl="720" class="ttl-pill bg-slate-950/60 border border-slate-800 rounded-lg px-2 py-2.5 text-xs text-slate-300 cursor-pointer transition-all hover:border-slate-600 text-center leading-tight"><span class="block text-base mb-0.5">📆</span>30 días</button>
+              <button type="button" data-ttl="custom" class="ttl-pill bg-slate-950/60 border border-slate-800 rounded-lg px-2 py-2.5 text-xs text-slate-300 cursor-pointer transition-all hover:border-slate-600 text-center leading-tight"><span class="block text-base mb-0.5">🎚</span>Custom</button>
+              <button type="button" data-ttl="0" class="ttl-pill bg-slate-950/60 border border-slate-800 rounded-lg px-2 py-2.5 text-xs text-slate-300 cursor-pointer transition-all hover:border-slate-600 text-center leading-tight"><span class="block text-base mb-0.5">♾</span>Nunca</button>
+            </div>
+            <div id="ttlCustomWrap" class="hidden mt-3">
+              <label class="block text-xs font-medium text-slate-400 mb-1 flex justify-between">Duración personalizada <span id="ttlCustomVal" class="text-blue-400">3 días</span></label>
+              <input type="number" id="ttlCustomDays" min="1" max="365" value="3" class={inputCls}>
+            </div>
+            <p id="ttlHint" class="text-[11px] text-slate-500 mt-2">La máquina se autodestruirá al expirar su TTL. Podrás renovarla o hacerla permanente desde el inventario.</p>
+          </section>
+        </div>
+      </div>
+
+      <div id="quotaWarning" class="hidden mt-5 bg-red-950/60 border border-red-700/50 rounded-lg px-3 py-2 text-xs text-red-300 space-y-0.5"></div>
+
+      <button type="submit" id="submitBtn" class="w-full mt-4 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 px-4 rounded-lg transition-colors flex justify-center items-center gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+        <span id="submitBtnText">Encolar Despliegue de Infraestructura</span>
+      </button>
+    </form>
+
+    <!-- ── Consola lateral (altura completa) ──────────────────────────────── -->
+    <div class="lg:col-span-1 lg:sticky lg:top-6">
+      <div class="bg-[#0A0A0A] border border-slate-800 rounded-xl h-[calc(100vh-9rem)] min-h-[420px] flex flex-col shadow-xl overflow-hidden">
+        <div class="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+          <span class="text-sm font-mono text-slate-400 flex items-center gap-2">
+            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+            Live Task Stream
+          </span>
+          <div class="flex gap-1.5">
+            <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+            <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+            <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+          </div>
+        </div>
+        <div id="consoleOutput" class="p-4 font-mono text-[13px] overflow-y-auto flex-1 space-y-1.5 text-slate-300 leading-relaxed scroll-smooth"></div>
+      </div>
+    </div>
+  </div>
+
+</Layout>
+
+<script>
+  import { apiFetch } from '@/lib/api.ts';
+
+  const nodeSelect = document.getElementById('nodeSelect') as HTMLSelectElement;
+  const templateSelect = document.getElementById('templateSelect') as HTMLSelectElement;
+  const networkSelect = document.getElementById('networkSelect') as HTMLSelectElement;
+  const startIdInput = document.getElementById('startId') as HTMLInputElement;
+  const consoleOutput = document.getElementById('consoleOutput');
+  const submitBtn = document.getElementById('submitBtn') as HTMLButtonElement;
+  const submitBtnText = document.getElementById('submitBtnText') as HTMLElement;
+  const ipModeRadios = document.getElementsByName('ipMode');
+  const staticIpFields = document.getElementById('staticIpFields');
+  const quotaWarning = document.getElementById('quotaWarning') as HTMLElement;
+
+  // ---- resource sliders ----
+  document.getElementById('cpuRange')!.addEventListener('input', (e) => {
+    document.getElementById('cpuVal')!.innerText = (e.target as HTMLInputElement).value;
+    checkQuotaOnClient();
+  });
+  document.getElementById('ramRange')!.addEventListener('input', (e) => {
+    document.getElementById('ramVal')!.innerText = (e.target as HTMLInputElement).value + " GB";
+    checkQuotaOnClient();
+  });
+  document.getElementById('diskRange')!.addEventListener('input', (e) => {
+    document.getElementById('diskVal')!.innerText = (e.target as HTMLInputElement).value + " GB";
+    checkQuotaOnClient();
+  });
+  document.getElementById('instances')!.addEventListener('input', checkQuotaOnClient);
+
+  // ---- TTL / lifecycle selector ----
+  const ttlHidden     = document.getElementById('ttlHours') as HTMLInputElement;
+  const ttlPills      = Array.from(document.querySelectorAll('.ttl-pill')) as HTMLElement[];
+  const ttlCustomWrap = document.getElementById('ttlCustomWrap') as HTMLElement;
+  const ttlCustomDays = document.getElementById('ttlCustomDays') as HTMLInputElement;
+  const ttlCustomVal  = document.getElementById('ttlCustomVal') as HTMLElement;
+  const ttlHint       = document.getElementById('ttlHint') as HTMLElement;
+  const TTL_SELECTED  = ['border-blue-500', 'ring-2', 'ring-blue-500/40', 'bg-blue-500/5', 'text-white'];
+
+  function setTtlHint(value: string) {
+    if (value === '0') {
+      ttlHint.className = 'text-[11px] text-amber-400/80 mt-2';
+      ttlHint.innerHTML = '⚠ No se eliminará automáticamente; consumirá cuota del pool de forma indefinida.';
+    } else {
+      ttlHint.className = 'text-[11px] text-slate-500 mt-2';
+      ttlHint.innerHTML = 'La máquina se autodestruirá al expirar su TTL. Podrás renovarla o hacerla permanente desde el inventario.';
+    }
+  }
+
+  function selectTtl(pill: HTMLElement) {
+    ttlPills.forEach(p => p.classList.remove(...TTL_SELECTED));
+    pill.classList.add(...TTL_SELECTED);
+    const v = pill.dataset.ttl!;
+    if (v === 'custom') {
+      ttlCustomWrap.classList.remove('hidden');
+      ttlHidden.value = String((parseInt(ttlCustomDays.value) || 1) * 24);
+      setTtlHint('custom');
+    } else {
+      ttlCustomWrap.classList.add('hidden');
+      ttlHidden.value = v;   // '0' = persistente
+      setTtlHint(v);
+    }
+  }
+
+  ttlPills.forEach(p => p.addEventListener('click', () => selectTtl(p)));
+  ttlCustomDays.addEventListener('input', () => {
+    const d = parseInt(ttlCustomDays.value) || 1;
+    ttlCustomVal.innerText = d === 1 ? '1 día' : `${d} días`;
+    ttlHidden.value = String(d * 24);
+  });
+  selectTtl(document.querySelector('.ttl-pill[data-ttl="24"]') as HTMLElement);
+
+  // ---- Catálogo de herramientas (multiselección) ----
+  const toolCatalog = document.getElementById('toolCatalog') as HTMLElement;
+  const selectedTools = new Set<string>();
+  const TOOL_SELECTED = ['border-blue-500', 'ring-2', 'ring-blue-500/40', 'bg-blue-500/5'];
+
+  function toggleTool(chip: HTMLElement) {
+    const id = chip.dataset.toolId!;
+    if (selectedTools.has(id)) {
+      selectedTools.delete(id);
+      chip.classList.remove(...TOOL_SELECTED);
+    } else {
+      selectedTools.add(id);
+      chip.classList.add(...TOOL_SELECTED);
+    }
+  }
+
+  async function loadToolCatalog() {
+    try {
+      const res = await apiFetch('/tools');
+      if (!res.ok) throw new Error('catalog');
+      const categories = await res.json();
+      toolCatalog.innerHTML = '';
+      categories.forEach((cat: any) => {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `<div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">${cat.category}</div>`;
+        const grid = document.createElement('div');
+        grid.className = 'grid grid-cols-2 sm:grid-cols-3 gap-2';
+        cat.tools.forEach((t: any) => {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.dataset.toolId = t.id;
+          chip.className = 'tool-chip bg-slate-950/60 border border-slate-800 rounded-lg px-2.5 py-2 cursor-pointer transition-all hover:border-slate-600 flex items-center gap-2 text-left';
+          chip.innerHTML = `<img src="/apps/${t.icon}.svg" alt="" class="w-5 h-5 shrink-0" onerror="this.src='/apps/terminal.svg'"/><span class="text-xs font-medium text-slate-200 truncate">${t.name}</span>`;
+          chip.addEventListener('click', () => toggleTool(chip));
+          grid.appendChild(chip);
+        });
+        wrap.appendChild(grid);
+        toolCatalog.appendChild(wrap);
+      });
+    } catch (e) {
+      toolCatalog.innerHTML = '<div class="text-sm text-red-400 py-2 text-center">No se pudo cargar el catálogo de herramientas.</div>';
+    }
+  }
+  loadToolCatalog();
+
+  // ---- quota data (la cuota se visualiza en /quotas; aquí solo alimenta el guard) ----
+  async function refreshQuotaData() {
+    try {
+      const res = await apiFetch('/quotas');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.length) return;
+      (window as any).__quotaData = data[0];
+      document.dispatchEvent(new CustomEvent('quotaDataUpdated'));
+    } catch (_) {}
+  }
+  refreshQuotaData();
+  setInterval(refreshQuotaData, 5_000);
+
+  // ---- client-side quota guard ----
+  function checkQuotaOnClient() {
+    const qd = (window as any).__quotaData;
+    if (!qd) return; // quota not loaded yet — backend will enforce
+
+    const count  = parseInt((document.getElementById('instances') as HTMLInputElement).value) || 1;
+    const cpu    = parseInt((document.getElementById('cpuRange')  as HTMLInputElement).value) * count;
+    const ramGb  = parseInt((document.getElementById('ramRange')  as HTMLInputElement).value) * count;
+    const diskGb = parseInt((document.getElementById('diskRange') as HTMLInputElement).value) * count;
+    const ramMb  = ramGb * 1024;
+
+    const violations: string[] = [];
+    if (qd.usage.cpu + cpu > qd.quota.max_cpu)
+      violations.push(`CPU: ${qd.usage.cpu} + ${cpu} = ${qd.usage.cpu + cpu} > límite ${qd.quota.max_cpu}`);
+    if (qd.usage.ram_mb + ramMb > qd.quota.max_ram_mb)
+      violations.push(`RAM: ${(qd.usage.ram_mb/1024).toFixed(1)} GB + ${ramGb} GB > límite ${(qd.quota.max_ram_mb/1024).toFixed(0)} GB`);
+    if (qd.usage.disk_gb + diskGb > qd.quota.max_disk_gb)
+      violations.push(`Disco: ${qd.usage.disk_gb.toFixed(1)} GB + ${diskGb} GB > límite ${qd.quota.max_disk_gb} GB`);
+
+    if (!quotaWarning) return;
+    if (violations.length) {
+      quotaWarning.innerHTML = violations.map(v => `<div>⚠ ${v}</div>`).join('');
+      quotaWarning.classList.remove('hidden');
+      submitBtn.disabled = true;
+      submitBtn.classList.replace('bg-blue-600', 'bg-slate-700');
+    } else {
+      quotaWarning.classList.add('hidden');
+      quotaWarning.innerHTML = '';
+      submitBtn.disabled = false;
+      submitBtn.classList.replace('bg-slate-700', 'bg-blue-600');
+    }
+  }
+
+  // Re-run quota check whenever the quota widget refreshes its data
+  document.addEventListener('quotaDataUpdated', checkQuotaOnClient);
+
+  ipModeRadios.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      if ((e.target as HTMLInputElement).value === 'Static') {
+        staticIpFields.classList.remove('hidden');
+        staticIpFields.classList.add('grid');
+      } else {
+        staticIpFields.classList.add('hidden');
+        staticIpFields.classList.remove('grid');
+      }
+    });
+  });
+
+  let knownTaskStates = new Map();
+  let isFirstLoad = true;
+
+  function logToConsole(msg, type = 'info') {
+    if (!consoleOutput) return;
+    const div = document.createElement('div');
+    const time = new Date().toLocaleTimeString();
+    const colorClass = type === 'error' ? 'text-red-400' : type === 'success' ? 'text-emerald-400' : type === 'system' ? 'text-blue-400' : 'text-slate-400';
+    div.innerHTML = `<span class="text-slate-600">[${time}]</span> <span class="${colorClass}">${msg}</span>`;
+    consoleOutput.appendChild(div);
+    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+  }
+
+  function appendTaskLog(task) {
+    const div = document.createElement('div');
+    const time = new Date().toLocaleTimeString();
+
+    let statusHtml = '';
+    let textClass = 'text-slate-300';
+
+    switch(task.status) {
+      case 'pending':
+        statusHtml = '<span class="text-slate-500 font-bold w-[70px] inline-block">[QUEUE]</span>';
+        break;
+      case 'running':
+        statusHtml = '<span class="text-blue-400 font-bold animate-pulse w-[70px] inline-block">[EXEC]</span>';
+        textClass = 'text-blue-200';
+        break;
+      case 'completed':
+        statusHtml = '<span class="text-emerald-400 font-bold w-[70px] inline-block">[OK]</span>';
+        textClass = 'text-emerald-300';
+        break;
+      case 'failed':
+        statusHtml = '<span class="text-red-400 font-bold w-[70px] inline-block">[FAIL]</span>';
+        textClass = 'text-red-300';
+        break;
+    }
+
+    div.innerHTML = `<span class="text-slate-600">[${time}]</span> ${statusHtml} <span class="${textClass}">${task.type}: ${task.target}</span>`;
+
+    if (task.status === 'failed' && task.error) {
+      div.innerHTML += `<div class="pl-[145px] text-red-500 text-[11px] mt-1 mb-2 border-l border-red-500/30 ml-8 py-1 bg-red-950/20 w-fit pr-4">└─ Error: ${task.error}</div>`;
+    }
+
+    consoleOutput.appendChild(div);
+    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+  }
+
+  async function pollTasksForTerminal() {
+    try {
+      const res = await apiFetch('/tasks');
+      if (!res.ok) return;
+      const tasks = await res.json();
+
+      tasks.forEach(task => {
+        const lastState = knownTaskStates.get(task.id);
+
+        if (lastState !== task.status) {
+           knownTaskStates.set(task.id, task.status);
+
+           if (isFirstLoad && (task.status === 'completed' || task.status === 'failed')) {
+             return;
+           }
+
+           appendTaskLog(task);
+        }
+      });
+      isFirstLoad = false;
+    } catch (e) {
+
+    }
+  }
+
+  async function init() {
+    logToConsole("Iniciando conexión con Proxmox API...", "system");
+    try {
+      const [nodesRes, nextIdRes] = await Promise.all([
+        apiFetch('/nodes'),
+        apiFetch('/vmid/next')
+      ]);
+
+      const nodes = await nodesRes.json();
+      const nextId = await nextIdRes.json();
+
+      nodeSelect.innerHTML = '<option value="">Selecciona un nodo...</option>';
+      nodes.forEach((node: any) => {
+        nodeSelect.innerHTML += `<option value="${node}">${node}</option>`;
+      });
+
+      startIdInput.value = nextId;
+      logToConsole("Sincronización inicial completada.", "success");
+
+      setInterval(pollTasksForTerminal, 1500);
+      pollTasksForTerminal();
+
+    } catch (error) {
+      logToConsole("Error de conexión. Verifique el backend.", "error");
+    }
+  }
+
+  nodeSelect.addEventListener('change', async (e) => {
+    const node = (e.target as HTMLSelectElement).value;
+    if (!node) {
+      templateSelect.disabled = true;
+      networkSelect.disabled = true;
+      return;
+    }
+
+    templateSelect.innerHTML = '<option value="">Cargando plantillas...</option>';
+    networkSelect.innerHTML = '<option value="">Cargando redes...</option>';
+    templateSelect.disabled = false;
+    networkSelect.disabled = false;
+
+    try {
+      const [tempRes, netRes] = await Promise.all([
+        apiFetch(`/nodes/${node}/templates`),
+        apiFetch(`/nodes/${node}/networks`)
+      ]);
+
+      const templates = await tempRes.json();
+      const networks = await netRes.json();
+
+      templateSelect.innerHTML = '';
+      Object.entries(templates).forEach(([label, id]) => {
+        templateSelect.innerHTML += `<option value="${id}">${label}</option>`;
+      });
+
+      networkSelect.innerHTML = '';
+      if (networks.bridges.length > 0) {
+        const group = document.createElement('optgroup');
+        group.label = "Bridges Físicos";
+        networks.bridges.forEach(b => group.innerHTML += `<option value="${b}">${b}</option>`);
+        networkSelect.appendChild(group);
+      }
+      if (networks.vnets.length > 0) {
+        const group = document.createElement('optgroup');
+        group.label = "SDN VNets";
+        networks.vnets.forEach(v => group.innerHTML += `<option value="${v}">${v}</option>`);
+        networkSelect.appendChild(group);
+      }
+    } catch (error) {
+      logToConsole("Error leyendo topología del nodo.", "error");
+    }
+  });
+
+  document.getElementById('deployForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const mode = document.querySelector('input[name="ipMode"]:checked').value;
+    const rawDns = (document.getElementById('dnsInput') as HTMLInputElement).value;
+    const finalDns = rawDns ? rawDns.split(',').map(d => d.trim()).filter(Boolean) : [];
+    const sshKeys = (document.getElementById('sshKeys') as HTMLTextAreaElement).value.trim();
+    const dnsDomain = (document.getElementById('dnsDomainInput') as HTMLInputElement).value.trim();
+
+    const payload = {
+      node_name: nodeSelect.value,
+      template_id: parseInt(templateSelect.value),
+      base_vm_name: (document.getElementById('vmName') as HTMLInputElement).value,
+      instance_count: parseInt((document.getElementById('instances') as HTMLInputElement).value),
+      start_vm_id: parseInt(startIdInput.value),
+      vm_cpu: parseInt((document.getElementById('cpuRange') as HTMLInputElement).value),
+      vm_ram_mb: parseInt((document.getElementById('ramRange') as HTMLInputElement).value) * 1024,
+      disk_size_gb: parseInt((document.getElementById('diskRange') as HTMLInputElement).value),
+      admin_user: (document.getElementById('adminUser') as HTMLInputElement).value,
+      admin_password: (document.getElementById('adminPassword') as HTMLInputElement).value,
+      network_bridge: networkSelect.value,
+      ip_mode: mode,
+      vm_ip_start: mode === 'Static' ? (document.getElementById('ipInput') as HTMLInputElement).value : null,
+      vm_gateway: mode === 'Static' ? (document.getElementById('gatewayInput') as HTMLInputElement).value : null,
+      vm_dns: finalDns,
+      vm_dns_domain: dnsDomain,
+      ssh_keys: sshKeys,
+      ttl_hours: parseInt(ttlHidden.value) > 0 ? parseInt(ttlHidden.value) : null,
+      app_ids: Array.from(selectedTools)
+    };
+
+    submitBtn.disabled = true;
+    submitBtn.classList.replace('bg-blue-600', 'bg-slate-700');
+    submitBtnText.innerHTML = `<span class="animate-spin text-blue-400 mr-2 inline-block">⚙️</span> Enviando...`;
+
+    try {
+      const res = await apiFetch('/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        logToConsole(`Ticket generado: Orquestando ${payload.instance_count} instancia(s).`, "system");
+        if (payload.app_ids.length) logToConsole(`Apps a instalar: ${payload.app_ids.join(', ')}`, "system");
+        startIdInput.value = String(payload.start_vm_id + payload.instance_count);
+      } else {
+        const detail = data.detail;
+        if (detail?.message && detail?.violations) {
+          logToConsole(`Rechazado: ${detail.message}`, "error");
+          (detail.violations as string[]).forEach((v: string) =>
+            logToConsole(`  └─ ${v}`, "error")
+          );
+        } else {
+          logToConsole(`Rechazado: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`, "error");
+        }
+      }
+    } catch (error) {
+      logToConsole(`Fallo de conexión con la API: ${error}`, "error");
+    } finally {
+      submitBtnText.innerHTML = `Encolar Despliegue de Infraestructura`;
+      submitBtn.classList.replace('bg-slate-700', 'bg-blue-600');
+      submitBtn.disabled = false;
+      checkQuotaOnClient(); // re-evaluate quota state after submit
+    }
+  });
+
+  init();
+</script>

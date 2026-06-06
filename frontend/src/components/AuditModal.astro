@@ -1,0 +1,185 @@
+---
+// src/components/AuditModal.astro
+---
+
+<dialog id="auditModal" class="bg-slate-900 text-slate-300 rounded-xl border border-slate-800 shadow-2xl p-0 backdrop:bg-black/70 backdrop:backdrop-blur-sm w-full max-w-2xl m-auto open:animate-in open:fade-in-90 open:zoom-in-95">
+  <div class="flex flex-col">
+    <div class="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/80">
+      <div>
+        <h3 class="text-xl font-bold text-white flex items-center gap-2">
+          <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+          Auditoría de Estado (Drift)
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">Inspeccionando instancia: <span id="modalAuditVmName" class="font-mono text-emerald-400 font-bold"></span></p>
+      </div>
+      <button type="button" id="closeAuditBtn" class="text-slate-500 hover:text-white transition-colors focus:outline-none rounded-md p-1 hover:bg-slate-800">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+
+    <div class="p-6 min-h-[250px] flex flex-col justify-center">
+      
+      <div id="auditLoading" class="flex flex-col items-center justify-center text-slate-400 space-y-4">
+        <svg class="w-10 h-10 animate-spin text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+        <p class="text-sm animate-pulse">Comparando código IaC con Proxmox API...</p>
+      </div>
+
+      <div id="auditSuccess" class="hidden flex-col items-center justify-center text-center space-y-3">
+        <div class="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mb-2">
+          <svg class="w-8 h-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+        </div>
+        <h4 class="text-lg font-bold text-white">Infraestructura Sincronizada</h4>
+        <p class="text-sm text-slate-400 max-w-md leading-relaxed">No se han detectado cambios manuales. La realidad en Proxmox coincide exactamente con el código de Terraform.</p>
+      </div>
+
+      <div id="auditDrift" class="hidden flex-col">
+        <div class="flex items-center gap-3 text-amber-500 mb-4 bg-amber-500/10 p-3 rounded-lg border border-amber-500/20">
+          <svg class="w-6 h-6 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+          <p class="text-sm font-medium">Se detectó Configuration Drift. Alguien ha modificado recursos a mano en Proxmox.</p>
+        </div>
+
+        <table class="w-full text-left text-sm border-collapse rounded-lg overflow-hidden border border-slate-800">
+          <thead class="bg-slate-950">
+            <tr>
+              <th class="px-4 py-3 font-semibold text-slate-400">Recurso</th>
+              <th class="px-4 py-3 font-semibold text-emerald-400">Código (IDP)</th>
+              <th class="px-4 py-3 font-semibold text-red-400">Actual (Proxmox)</th>
+            </tr>
+          </thead>
+          <tbody id="driftTableBody" class="divide-y divide-slate-800/50 bg-slate-900/50">
+            </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="auditFooter" class="p-6 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-3 rounded-b-xl hidden">
+      <button type="button" id="btnAcceptReality" class="px-4 py-2.5 rounded-lg text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors" title="Actualiza Terraform para que coincida con Proxmox">
+        Aceptar Realidad (Actualizar Código)
+      </button>
+      <button type="button" id="btnSyncProxmox" class="px-6 py-2.5 rounded-lg text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white transition-colors shadow-lg shadow-amber-900/20" title="Fuerza a Proxmox a volver al estado que marca el IDP">
+        Sincronizar (Sobrescribir Proxmox)
+      </button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  import { apiFetch } from '../lib/api.ts';
+
+  const auditModal = document.getElementById('auditModal') as HTMLDialogElement;
+  const vmNameDisplay = document.getElementById('modalAuditVmName');
+  const closeBtn = document.getElementById('closeAuditBtn');
+  
+  const vLoading = document.getElementById('auditLoading');
+  const vSuccess = document.getElementById('auditSuccess');
+  const vDrift = document.getElementById('auditDrift');
+  const vFooter = document.getElementById('auditFooter');
+  const tableBody = document.getElementById('driftTableBody');
+  
+  const btnAccept = document.getElementById('btnAcceptReality') as HTMLButtonElement;
+  const btnSync = document.getElementById('btnSyncProxmox') as HTMLButtonElement;
+
+  let currentVm = "";
+  let payloadSync = {};
+  let payloadAccept = {};
+
+  // CORRECCIÓN: Función switchView totalmente blindada
+  const switchView = (view) => {
+    // 1. Ocultar todos los contenedores reseteando sus clases
+    vLoading.classList.add('hidden');
+    vLoading.classList.remove('flex');
+    
+    vSuccess.classList.add('hidden');
+    vSuccess.classList.remove('flex');
+    
+    vDrift.classList.add('hidden');
+    vDrift.classList.remove('flex');
+    
+    vFooter.classList.add('hidden');
+    vFooter.classList.remove('flex');
+
+    // 2. Mostrar únicamente el contenedor solicitado
+    if(view === 'loading') {
+      vLoading.classList.remove('hidden');
+      vLoading.classList.add('flex');
+    }
+    else if(view === 'success') {
+      vSuccess.classList.remove('hidden');
+      vSuccess.classList.add('flex');
+    }
+    else if(view === 'drift') {
+      vDrift.classList.remove('hidden');
+      vDrift.classList.add('flex');
+      
+      vFooter.classList.remove('hidden');
+      vFooter.classList.add('flex');
+    }
+  };
+
+  window.openAuditModal = async (vmName, baseCpu, baseRam, baseDisk) => {
+    currentVm = vmName;
+    vmNameDisplay.innerText = vmName;
+    switchView('loading');
+    auditModal.showModal();
+
+    payloadSync = { vm_cpu: baseCpu, vm_ram_mb: baseRam, disk_size_gb: baseDisk, ssh_keys: "" };
+    payloadAccept = { ...payloadSync };
+
+    try {
+      const res = await apiFetch(`/audit/${vmName}`);
+      if (!res.ok) throw new Error("Fallo en la auditoría");
+      const data = await res.json();
+      console.log("Resultado de auditoría:", data);
+      
+      if (!data.drift) {
+        switchView('success');
+      } else {
+        tableBody.innerHTML = '';
+        data.changes.forEach(c => {
+          tableBody.innerHTML += `
+            <tr>
+              <td class="px-4 py-3 text-white font-medium">${c.label}</td>
+              <td class="px-4 py-3 text-emerald-400 font-mono">${c.expected}</td>
+              <td class="px-4 py-3 text-red-400 font-mono">${c.actual}</td>
+            </tr>
+          `;
+          
+          if(c.parameter === 'cpu') payloadAccept.vm_cpu = parseInt(c.actual);
+          if(c.parameter === 'ram') payloadAccept.vm_ram_mb = parseInt(c.actual);
+          if(c.parameter === 'disk') payloadAccept.disk_size_gb = parseInt(c.actual);
+        });
+        switchView('drift');
+      }
+    } catch (e) {
+      alert("Error crítico ejecutando la auditoría de Drift.");
+      auditModal.close();
+    }
+  };
+
+  closeBtn.addEventListener('click', () => auditModal.close());
+
+  const submitResolution = async (payload, btn, loadingText) => {
+    const originalText = btn.innerText;
+    btn.innerHTML = `<span class="animate-spin inline-block">⚙️</span> ${loadingText}`;
+    btn.disabled = true;
+    
+    try {
+      const res = await apiFetch(`/deploy/${currentVm}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error("Error encolando la resolución.");
+      
+      auditModal.close();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      btn.innerText = originalText;
+      btn.disabled = false;
+    }
+  };
+
+  btnSync.addEventListener('click', () => submitResolution(payloadSync, btnSync, "Sincronizando..."));
+  btnAccept.addEventListener('click', () => submitResolution(payloadAccept, btnAccept, "Actualizando Código..."));
+</script>

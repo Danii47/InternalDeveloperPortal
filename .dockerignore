@@ -1,0 +1,34 @@
+# Secrets — never bake into the image
+.env
+.env.*
+
+# Python runtime artefacts
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Persistent data — injected via bind-mounts at runtime
+terraform/
+data/
+*.db
+
+# Logs
+*.log
+
+# Frontend — has its own build context
+frontend/
+
+# Docker files themselves
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# VCS
+.git/
+.gitignore
+*.md
+
+pnpm-workspace.yaml

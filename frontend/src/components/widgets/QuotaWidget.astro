@@ -1,0 +1,114 @@
+---
+// Data fetched entirely client-side so the widget stays live without SSR re-renders.
+// Exposes window.__quotaData for the deploy-form's client-side validation.
+---
+
+<div id="quotaWidget" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6 shadow-xl">
+  <div class="flex items-center justify-between mb-4">
+    <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+      <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+      </svg>
+      Cuota del Pool
+    </h3>
+    <span id="quotaPoolName"
+      class="text-xs font-mono bg-slate-800 text-blue-400 px-2 py-0.5 rounded border border-slate-700">
+      cargando…
+    </span>
+  </div>
+
+  <!-- CPU -->
+  <div class="mb-4">
+    <div class="flex justify-between text-xs mb-1.5">
+      <span class="text-slate-400">CPU (vCores)</span>
+      <span id="quotaCpuText" class="text-slate-300 font-mono">— / —</span>
+    </div>
+    <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+      <div id="quotaCpuBar"
+        class="h-full rounded-full transition-all duration-500 bg-blue-500"
+        style="width:0%">
+      </div>
+    </div>
+  </div>
+
+  <!-- RAM -->
+  <div class="mb-4">
+    <div class="flex justify-between text-xs mb-1.5">
+      <span class="text-slate-400">RAM</span>
+      <span id="quotaRamText" class="text-slate-300 font-mono">— / —</span>
+    </div>
+    <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+      <div id="quotaRamBar"
+        class="h-full rounded-full transition-all duration-500 bg-blue-500"
+        style="width:0%">
+      </div>
+    </div>
+  </div>
+
+  <!-- Disco -->
+  <div>
+    <div class="flex justify-between text-xs mb-1.5">
+      <span class="text-slate-400">Disco</span>
+      <span id="quotaDiskText" class="text-slate-300 font-mono">— / —</span>
+    </div>
+    <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+      <div id="quotaDiskBar"
+        class="h-full rounded-full transition-all duration-500 bg-blue-500"
+        style="width:0%">
+      </div>
+    </div>
+  </div>
+
+  <!-- Quota-exceeded warning shown by the deploy form -->
+  <div id="quotaWarning"
+    class="hidden mt-4 bg-red-950/60 border border-red-700/50 rounded-lg px-3 py-2 text-xs text-red-300 space-y-0.5">
+  </div>
+</div>
+
+<script>
+  import { apiFetch } from '@/lib/api.ts';
+
+  // Shared quota state — read by the deploy form's submit handler.
+  window.__quotaData = null;
+
+  function _barColor(pct: number): string {
+    if (pct >= 90) return 'bg-red-500';
+    if (pct >= 75) return 'bg-orange-400';
+    return 'bg-blue-500';
+  }
+
+  function _fmtRam(mb: number): string {
+    return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+  }
+
+  function _setBar(barId: string, textId: string, used: number, max: number, fmt: (n: number) => string) {
+    const pct = max > 0 ? Math.min(100, Math.round((used / max) * 100)) : 0;
+    const bar = document.getElementById(barId)!;
+    const txt = document.getElementById(textId)!;
+    bar.style.width = `${pct}%`;
+    bar.className = `h-full rounded-full transition-all duration-500 ${_barColor(pct)}`;
+    txt.textContent = `${fmt(used)} / ${fmt(max)}`;
+  }
+
+  async function refreshQuota() {
+    try {
+      const res = await apiFetch('/quotas');
+      if (!res.ok) return;
+      const data: any[] = await res.json();
+      if (!data.length) return;
+
+      const { pool_name, quota, usage } = data[0];
+      window.__quotaData = { pool_name, quota, usage };
+
+      document.getElementById('quotaPoolName')!.textContent = pool_name;
+      _setBar('quotaCpuBar', 'quotaCpuText', usage.cpu, quota.max_cpu, String);
+      _setBar('quotaRamBar', 'quotaRamText', usage.ram_mb, quota.max_ram_mb, _fmtRam);
+      _setBar('quotaDiskBar', 'quotaDiskText', usage.disk_gb, quota.max_disk_gb, (n) => `${n.toFixed(1)} GB`);
+      document.dispatchEvent(new CustomEvent('quotaDataUpdated'));
+    } catch (_) {}
+  }
+
+  refreshQuota();
+  setInterval(refreshQuota, 5_000);
+</script>
