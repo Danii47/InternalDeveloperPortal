@@ -9,6 +9,7 @@ PyJWT==2.10.1
 pydantic==2.13.4
 pydantic_core==2.46.4
 python-dotenv==1.2.2
+PyYAML==6.0.2             # carga de definiciones de Blueprints (YAML)
 requests>=2.32.3          # proxmoxer https backend
 starlette==1.0.0
 uvicorn[standard]==0.46.0

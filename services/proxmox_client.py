@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import time
@@ -5,7 +6,16 @@ import urllib3
 from proxmoxer import ProxmoxAPI
 from dotenv import load_dotenv
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from core.config import proxmox_tls_verify
+
+# Solo silencia el warning de TLS cuando NO se verifica (comportamiento por defecto).
+if proxmox_tls_verify() is False:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+logger = logging.getLogger("proxmox_client")
+
+# Tipos de zona SDN cuyas VNets EXIGEN un tag (VLAN id / VNI). 'simple' y casos desconocidos no.
+_TAG_ZONES = ("vlan", "vxlan", "qinq", "evpn")
 
 class ProxmoxIDPClient:
     """
@@ -39,7 +49,7 @@ class ProxmoxIDPClient:
                 user=user,
                 token_name=token_name,
                 token_value=secret_token,
-                verify_ssl=False
+                verify_ssl=proxmox_tls_verify()
             )
         except Exception as e:
             raise ConnectionError(f" Error connecting to Proxmox: {e}")
@@ -65,7 +75,7 @@ class ProxmoxIDPClient:
             host,
             user=f"{username}@{realm}",
             password=password,
-            verify_ssl=False
+            verify_ssl=proxmox_tls_verify()
         )
         return instance
 
@@ -97,6 +107,77 @@ class ProxmoxIDPClient:
             tag_list.append('managed-by-idp')
         self.proxmox.nodes(node).qemu(vmid).config.put(tags=';'.join(tag_list))
 
+    def pool_exists(self, poolid: str) -> bool:
+        try:
+            return poolid in {p["poolid"] for p in self.proxmox.pools.get()}
+        except Exception:
+            return False
+
+    def grant_acl(self, path: str, role: str, groups=None, users=None, propagate: int = 1) -> None:
+        """
+        Concede `role` en `path` a uno o varios grupos y/o usuarios (PUT /access/acl).
+        `groups`/`users` aceptan str o lista. Ej.: grant_acl('/sdn/zones/z/vnet', 'PVESDNUser', groups='g1').
+        """
+        def _csv(v):
+            if not v:
+                return None
+            return v if isinstance(v, str) else ",".join(v)
+        kwargs = {"path": path, "roles": role, "propagate": propagate}
+        g, u = _csv(groups), _csv(users)
+        if g:
+            kwargs["groups"] = g
+        if u:
+            kwargs["users"] = u
+        if g or u:
+            self.proxmox.access.acl.put(**kwargs)
+
+    def create_pool(self, poolid: str, comment: str = "", users=None, groups=None,
+                    roles: str = "PVEVMAdmin") -> str:
+        """
+        Crea (idempotente) un Resource Pool y, opcionalmente, concede `roles` a `users`/`groups`
+        sobre él con propagación. Cliente GLOBAL (token admin). Devuelve el poolid.
+        """
+        if not self.pool_exists(poolid):
+            self.proxmox.pools.post(poolid=poolid, comment=comment)
+        if users or groups:
+            self.grant_acl(f"/pool/{poolid}", roles, groups=groups, users=users)
+        return poolid
+
+    def delete_pool(self, poolid: str) -> None:
+        """Elimina un Resource Pool (debe estar vacío). Compensador de create_pool."""
+        self.proxmox.pools(poolid).delete()
+
+    # ------------------------------------------------------------------ #
+    #  Grupos y permisos (modelo de inquilino de Blueprints)              #
+    # ------------------------------------------------------------------ #
+
+    def group_exists(self, groupid: str) -> bool:
+        try:
+            return groupid in {g["groupid"] for g in self.proxmox.access.groups.get()}
+        except Exception:
+            return False
+
+    def create_group(self, groupid: str, comment: str = "") -> str:
+        """Crea (idempotente) un grupo de Proxmox. Devuelve el groupid."""
+        if not self.group_exists(groupid):
+            self.proxmox.access.groups.post(groupid=groupid, comment=comment)
+        return groupid
+
+    def delete_group(self, groupid: str) -> None:
+        """Elimina un grupo. Compensador de create_group."""
+        self.proxmox.access.groups(groupid).delete()
+
+    def get_permissions(self) -> dict:
+        """
+        Permisos efectivos del token actual: {path: {priv: 1, ...}}. Read-only.
+        Usado por el pre-flight para avisar de privilegios ausentes antes de ejecutar.
+        Devuelve {} ante error.
+        """
+        try:
+            return self.proxmox.access.permissions.get() or {}
+        except Exception:
+            return {}
+
     def ensure_user_pool(self, userid: str) -> str:
         """
         Idempotently creates the user's Resource Pool and grants PVEVMAdmin on it.
@@ -105,19 +186,7 @@ class ProxmoxIDPClient:
         Returns the pool ID (e.g. 'idp-daniel-pve').
         """
         poolid = self._poolid_for(userid)
-
-        existing_pools = {p["poolid"] for p in self.proxmox.pools.get()}
-        if poolid not in existing_pools:
-            self.proxmox.pools.post(poolid=poolid, comment=f"IDP owner pool for {userid}")
-
-        # Assign PVEVMAdmin role on the pool with propagation (idempotent PUT)
-        self.proxmox.access.acl.put(
-            path=f"/pool/{poolid}",
-            roles="PVEVMAdmin",
-            users=userid,
-            propagate=1,
-        )
-        return poolid
+        return self.create_pool(poolid, comment=f"IDP owner pool for {userid}", users=userid)
 
     def get_nodes(self) -> list:
         """Returns a list with the names of active nodes."""
@@ -136,19 +205,124 @@ class ProxmoxIDPClient:
                 if net.get('type') in ['bridge', 'OVSBridge']:
                     available_networks['bridges'].add(net['iface'])
         except Exception as e:
-            print(f" Warning getting networks from node {node}: {e}")
+            logger.warning("Error obteniendo redes del nodo %s: %s", node, e)
 
         try:
             vnets = self.proxmox.cluster.sdn.vnets.get()
             for vnet in vnets:
                 available_networks['vnets'].add(vnet['vnet'])
         except Exception as e:
-            print(f" Warning getting VNets from SDN: {e}")
+            logger.warning("Error obteniendo VNets de SDN: %s", e)
 
         return {
             "bridges": sorted(list(available_networks["bridges"])),
             "vnets": sorted(list(available_networks["vnets"]))
         }
+
+    # ------------------------------------------------------------------ #
+    #  SDN: zonas / VNets / subredes (usado por Blueprints, token admin)   #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _first_host(cidr: str) -> str:
+        """Primera IP utilizable de un CIDR (gateway por convención)."""
+        import ipaddress
+        net = ipaddress.ip_network(cidr, strict=False)
+        return str(next(net.hosts()))
+
+    def apply_sdn(self) -> None:
+        """Aplica/recarga la configuración SDN pendiente (equivale a 'Apply' en la UI)."""
+        self.proxmox.cluster.sdn.put()
+
+    def get_sdn_zones(self) -> list:
+        """Zonas SDN existentes: [{'zone','type'}]. Los blueprints NO crean zonas (solo se eligen)."""
+        try:
+            return [{"zone": z.get("zone"), "type": z.get("type") or ""}
+                    for z in self.proxmox.cluster.sdn.zones.get()]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _norm_tag(value) -> int:
+        """Normaliza un tag de entrada (str/int/None/'') → int o None si no se indicó."""
+        if value is None:
+            return None
+        s = str(value).strip()
+        if s in ("", "None"):
+            return None
+        return int(s)
+
+    def _next_free_tag(self, zone: str, zone_type: str) -> int:
+        """Elige un tag libre en la zona. VLAN: 2-4094; VXLAN/QinQ (VNI): 1-16777215."""
+        try:
+            used = {
+                int(v["tag"]) for v in self.proxmox.cluster.sdn.vnets.get()
+                if v.get("zone") == zone and str(v.get("tag", "")).strip() not in ("", "None")
+            }
+        except Exception:
+            used = set()
+        lo, hi = (2, 4094) if zone_type == "vlan" else (1, 16777215)
+        cand = max([lo - 1, *used]) + 1
+        if cand > hi:  # raro: rango agotado por arriba → busca el primer hueco
+            cand = next((t for t in range(lo, hi + 1) if t not in used), lo)
+        return cand
+
+    def create_vnet(self, vnet: str, zone: str = "idpzone",
+                    subnet: str = None, gateway: str = None, tag=None, alias=None) -> dict:
+        """
+        Crea (idempotente) una VNet en una zona SDN **ya existente** (los blueprints no crean
+        zonas) y, si se indica `subnet` (CIDR), su subred con gateway (primer host por defecto).
+        `alias` fija el nombre descriptivo de la VNet. Las zonas vlan/vxlan/qinq/evpn EXIGEN un
+        `tag` (VLAN id / VNI): si no se pasa, se autoasigna uno libre. Aplica SDN.
+        Devuelve {'vnet','zone','subnet','tag','alias'} para auditoría/rollback.
+        """
+        zones = {z["zone"]: z["type"] for z in self.get_sdn_zones()}
+        if zone not in zones:
+            raise ValueError(
+                f"La zona SDN '{zone}' no existe. Créala en Proxmox (Datacenter → SDN → Zones); "
+                "los blueprints no crean zonas, solo VNets dentro de una zona existente."
+            )
+        zone_type = zones[zone]
+
+        existing_vnets = {v["vnet"] for v in self.proxmox.cluster.sdn.vnets.get()}
+        assigned_tag = self._norm_tag(tag)
+        alias = (str(alias).strip() or None) if alias is not None else None
+        if vnet not in existing_vnets:
+            kwargs = {"vnet": vnet, "zone": zone}
+            if alias:
+                kwargs["alias"] = alias
+            if zone_type in _TAG_ZONES:
+                # vlan/vxlan/qinq/evpn EXIGEN un tag (VLAN id / VNI). Si no se indica, autoasignamos.
+                if assigned_tag is None:
+                    assigned_tag = self._next_free_tag(zone, zone_type)
+                kwargs["tag"] = assigned_tag
+            else:
+                assigned_tag = None  # zonas 'simple' no llevan tag; se ignora si se hubiera pasado
+            self.proxmox.cluster.sdn.vnets.post(**kwargs)
+
+        if subnet:
+            gw = gateway or self._first_host(subnet)
+            try:
+                existing_subnets = {
+                    (s.get("cidr") or s.get("subnet"))
+                    for s in self.proxmox.cluster.sdn.vnets(vnet).subnets.get()
+                }
+            except Exception:
+                existing_subnets = set()
+            if subnet not in existing_subnets:
+                self.proxmox.cluster.sdn.vnets(vnet).subnets.post(
+                    subnet=subnet, type="subnet", gateway=gw
+                )
+
+        self.apply_sdn()
+        return {"vnet": vnet, "zone": zone, "subnet": subnet, "tag": assigned_tag, "alias": alias}
+
+    def delete_vnet(self, vnet: str) -> None:
+        """Elimina una VNet y recarga SDN. Compensador de create_vnet."""
+        try:
+            self.proxmox.cluster.sdn.vnets(vnet).delete()
+        finally:
+            self.apply_sdn()
 
     def get_templates(self, node: str) -> dict:
         available_templates = {}
@@ -165,15 +339,16 @@ class ProxmoxIDPClient:
                     
             return available_templates
         except Exception as e:
-            print(f"Error getting templates from node {node}: {e}")
+            logger.error("Error obteniendo plantillas del nodo %s: %s", node, e)
             return {}
 
     def get_next_vmid(self) -> int:
-        """Gets the next free virtual machine ID in the cluster."""
+        """Siguiente VMID libre del clúster. La API lo devuelve como string ('106') → lo casteamos
+        a int para poder operar aritméticamente (p.ej. base_id + i en despliegues múltiples)."""
         try:
-            return self.proxmox.cluster.nextid.get()
+            return int(self.proxmox.cluster.nextid.get())
         except Exception as e:
-            print(f"Error getting the next VMID: {e}")
+            logger.error("Error obteniendo el siguiente VMID: %s", e)
             return -1
 
     def get_template_names(self) -> dict:
@@ -219,7 +394,7 @@ class ProxmoxIDPClient:
             return inventory
             
         except Exception as e:
-            print(f"❌ Error scanning cluster inventory: {e}")
+            logger.error("Error escaneando el inventario del clúster: %s", e)
             return []
         
     def set_vm_power_state(self, node: str, vmid: int, action: str) -> bool:
@@ -246,7 +421,7 @@ class ProxmoxIDPClient:
                 time.sleep(2)
                 
             if not local_synced:
-                print(f"Warning: Timeout waiting for local VM {vmid} to change to {target_status}")
+                logger.warning("Timeout esperando que la VM %s pase a %s (nodo local)", vmid, target_status)
                 return True
 
             for _ in range(10):
@@ -259,11 +434,11 @@ class ProxmoxIDPClient:
                     
                 time.sleep(2)
                 
-            print(f"Warning: Timeout waiting for cluster cache to sync for VM {vmid}")
+            logger.warning("Timeout esperando sincronización de la caché del clúster para la VM %s", vmid)
             return True
             
         except Exception as e:
-            print(f"Error changing power state ({action}) on VM {vmid}: {e}")
+            logger.error("Error cambiando el estado de energía (%s) de la VM %s: %s", action, vmid, e)
             raise e
     
     def get_vm_config(self, node: str, vmid: int) -> dict:
@@ -365,6 +540,22 @@ class ProxmoxIDPClient:
             return [p["poolid"] for p in self.proxmox.pools.get()]
         except Exception:
             return []
+
+    def get_vm_by_name(self, name: str) -> dict | None:
+        """
+        Busca una VM QEMU por nombre en el clúster. Devuelve {'vmid','node','name'} o None.
+        Usado por las acciones de Blueprint que apuntan a una VM por nombre.
+        """
+        try:
+            resources = self.proxmox.cluster.resources.get(type="vm")
+            r = next(
+                (x for x in resources
+                 if x.get("type") == "qemu" and x.get("name") == name),
+                None,
+            )
+            return {"vmid": r["vmid"], "node": r["node"], "name": r["name"]} if r else None
+        except Exception:
+            return None
 
     def get_vm_resource(self, vmid: int) -> dict | None:
         """

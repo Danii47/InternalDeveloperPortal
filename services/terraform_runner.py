@@ -6,6 +6,8 @@ from dataclasses import dataclass, field, replace
 from typing import List, Tuple
 from dotenv import load_dotenv
 
+from core.config import PROXMOX_CA_PATH, PROXMOX_VERIFY_SSL
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ class VMConfig:
     network_bridge: str
     admin_user: str
     admin_password: str
+    network_bridges: List[str] = field(default_factory=list)  # multi-NIC; vacío = [network_bridge]
     vm_ip: str = "dhcp"
     vm_gateway: str = ""
     vm_dns: List[str] = field(default_factory=list)
@@ -56,6 +59,19 @@ class TerraformRunner:
         self.api_token = os.getenv("PROXMOX_TOKEN_ID") + "=" + os.getenv("PROXMOX_SECRET_TOKEN")
         if not self.api_token or "=" not in self.api_token:
             raise ValueError(" Faltan credenciales de Proxmox en el entorno (.env).")
+        self.endpoint = os.getenv("PROXMOX_URL", "")
+
+    def _base_env(self) -> dict:
+        """Entorno base para toda invocación de Terraform: credenciales + endpoint del provider.
+        Centraliza los TF_VAR_* comunes (evita hardcodear el endpoint en providers.tf)."""
+        env = os.environ.copy()
+        env.update({
+            "TF_VAR_api_token": self.api_token,
+            "TF_VAR_proxmox_endpoint": self.endpoint,
+            # Verificación TLS configurable (default inseguro = comportamiento histórico).
+            "TF_VAR_proxmox_insecure": "false" if (PROXMOX_VERIFY_SSL or PROXMOX_CA_PATH) else "true",
+        })
+        return env
 
     # ── Mapeo VMConfig ↔ Terraform (único lugar) ────────────────────────────────
 
@@ -69,6 +85,7 @@ class TerraformRunner:
             "TF_VAR_admin_password": c.admin_password,
             "TF_VAR_ssh_keys": c.ssh_keys,
             "TF_VAR_vm_dns": json.dumps(c.vm_dns),
+            "TF_VAR_network_bridges": json.dumps(c.network_bridges),
         }
         args = [
             f"-var=vm_id={c.vm_id}",
@@ -117,6 +134,7 @@ class TerraformRunner:
             template_id=attrs.get("clone", [{}])[0].get("vm_id", 0) if attrs.get("clone") else 0,
             vm_name=vm_name,
             network_bridge=attrs.get("network_device", [{}])[0].get("bridge", "vmbr0") if attrs.get("network_device") else "vmbr0",
+            network_bridges=[d.get("bridge") for d in attrs.get("network_device", []) if d.get("bridge")],
             admin_user=user_account.get("username", "administrator"),
             admin_password=user_account.get("password", ""),
             vm_ip=ip_config.get("address", "dhcp"),
@@ -153,8 +171,7 @@ class TerraformRunner:
     # ── Operaciones ─────────────────────────────────────────────────────────────
 
     def deploy(self, config: VMConfig) -> bool:
-        env = os.environ.copy()
-        env["TF_VAR_api_token"] = self.api_token
+        env = self._base_env()
 
         workspace_name = config.vm_name
         self._select_workspace(env, workspace_name, create=True)
@@ -177,8 +194,7 @@ class TerraformRunner:
             raise RuntimeError(f"Terraform failed: {e.stderr}") from e
 
     def destroy(self, vm_name: str, vmid: int, node_name: str) -> bool:
-        env = os.environ.copy()
-        env["TF_VAR_api_token"] = self.api_token
+        env = self._base_env()
 
         logger.info(f"💣 Iniciando destrucción de la máquina: {vm_name} (ID: {vmid}) en {node_name}")
 
@@ -217,8 +233,7 @@ class TerraformRunner:
             raise RuntimeError(f"Fallo al destruir la infraestructura: {e.stderr}") from e
 
     def update(self, vm_name: str, updates: dict) -> bool:
-        env = os.environ.copy()
-        env["TF_VAR_api_token"] = self.api_token
+        env = self._base_env()
 
         logger.info(f"⚙️ Iniciando mutación de la máquina: {vm_name}")
 
@@ -255,8 +270,7 @@ class TerraformRunner:
             raise RuntimeError(f"Fallo al aplicar cambios en Terraform:\n{e.stderr}") from e
 
     def reprovision(self, vm_name: str, new_password: str) -> bool:
-        env = os.environ.copy()
-        env["TF_VAR_api_token"] = self.api_token
+        env = self._base_env()
 
         logger.info(f"🔄 Iniciando reprovisionamiento (Nuke & Pave) de: {vm_name}")
 
@@ -286,8 +300,7 @@ class TerraformRunner:
             raise RuntimeError(f"Fallo al aplicar reprovisionamiento en Terraform:\n{e.stderr}") from e
 
     def audit(self, vm_name: str) -> dict:
-        env = os.environ.copy()
-        env["TF_VAR_api_token"] = self.api_token
+        env = self._base_env()
 
         logger.info(f"🛡️ Iniciando auditoría de drift para: {vm_name}")
 
@@ -355,8 +368,7 @@ class TerraformRunner:
         template_id = 0  → VM has no clone origin (dynamic clone block is skipped).
         template_id > 0  → VM was cloned from this template (enables reprovision later).
         """
-        env = os.environ.copy()
-        env["TF_VAR_api_token"] = self.api_token
+        env = self._base_env()
 
         logger.info(f"📥 Adoptando VM '{vm_name}' (ID: {vmid}, nodo: {node}, template: {template_id})")
 

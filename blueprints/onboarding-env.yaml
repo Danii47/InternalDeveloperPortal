@@ -1,0 +1,63 @@
+id: onboarding-env
+name: "Onboarding de Nuevo Entorno"
+description: "Crea un Resource Pool, una VNet/SDN aislada y despliega 2 VMs conectadas a ella."
+on_failure: halt          # halt (def.) | rollback
+
+variables:
+  - key: env_name
+    label: "Nombre del entorno"
+    type: string
+    required: true
+    pattern: "^[a-z][a-z0-9-]{2,19}$"
+    help: "minúsculas, números y guiones (3-20)"
+    placeholder: "proyecto-x"
+  - key: node
+    label: "Nodo Proxmox"
+    type: node_select
+    required: true
+  - key: template
+    label: "Plantilla OS"
+    type: template_select
+    required: true
+    depends_on: node
+  - key: vnet_cidr
+    label: "Rango IP de la VNet (CIDR)"
+    type: cidr
+    required: true
+    placeholder: "10.20.0.1/24"
+  - key: pool_cpu
+    label: "Cuota vCPU del pool"
+    type: slider
+    min: 4
+    max: 64
+    step: 4
+    default: 16
+
+steps:
+  - id: pool
+    action: create_pool
+    name: "Crear Pool idp-{{env_name}}"
+    params:
+      poolid: "idp-{{env_name}}"
+      comment: "Blueprint onboarding: {{env_name}}"
+      quota_cpu: "{{pool_cpu}}"
+  - id: net
+    action: create_vnet
+    name: "Crear VNet {{vnet_id}}"
+    params:
+      vnet: "{{vnet_id}}"
+      zone: "idpzone"
+      subnet: "{{vnet_cidr}}"
+  - id: vms
+    action: deploy_vms
+    name: "Desplegar 2 VMs en {{env_name}}"
+    params:
+      count: 2
+      base_name: "{{env_name}}-node"
+      node: "{{node}}"
+      template_id: "{{template}}"
+      pool: "idp-{{env_name}}"
+      bridges: ["{{vnet_id}}"]
+      cpu: 2
+      ram_mb: 4096
+      disk_gb: 20

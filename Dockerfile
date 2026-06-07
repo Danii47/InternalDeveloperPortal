@@ -10,7 +10,11 @@ RUN apt-get update \
       unzip \
       ca-certificates \
       curl \
+      gosu \
  && rm -rf /var/lib/apt/lists/*
+
+# Usuario no-root para ejecutar la aplicación (el entrypoint baja privilegios con gosu).
+RUN groupadd -g 10001 idp && useradd -u 10001 -g idp -m -s /usr/sbin/nologin idp
 
 # ── Terraform CLI ─────────────────────────────────────────────────────────────
 # Override at build time: --build-arg TERRAFORM_VERSION=x.y.z

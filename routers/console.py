@@ -1,11 +1,15 @@
 import asyncio
+import re
 import ssl
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from websockets.asyncio.client import connect as ws_connect
 
-from core.config import ALLOWED_ORIGINS, PROXMOX_HOST, PROXMOX_PORT
+from core.config import ALLOWED_ORIGINS, PROXMOX_CA_PATH, PROXMOX_HOST, PROXMOX_PORT, PROXMOX_VERIFY_SSL
+
+# Nombre de nodo seguro para interpolar en la URL del proxy (evita inyección de ruta/query).
+_NODE_RE = re.compile(r"^[a-zA-Z0-9.\-]{1,64}$")
 from core.security import (
     UserSession,
     assert_vm_accessible_by_vmid,
@@ -72,6 +76,10 @@ async def console_ws(
         await websocket.close(code=1008)
         return
 
+    if not _NODE_RE.match(node):
+        await websocket.close(code=1008)
+        return
+
     pve_ticket, _ = sess.client.proxmox.get_tokens()
 
     pve_url = (
@@ -80,9 +88,12 @@ async def console_ws(
         f"?port={port}&vncticket={quote(vncticket, safe='')}"
     )
 
-    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
+    if PROXMOX_VERIFY_SSL or PROXMOX_CA_PATH:
+        ssl_ctx = ssl.create_default_context(cafile=PROXMOX_CA_PATH or None)
+    else:
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
 
     await websocket.accept(subprotocol="binary")
 

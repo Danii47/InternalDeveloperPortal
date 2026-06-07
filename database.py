@@ -50,6 +50,39 @@ def init_db() -> None:
                 status      TEXT    NOT NULL DEFAULT 'active'
             )
         """)
+        # Blueprint executions (orchestrator runs). La DEFINICIÓN vive en YAML; aquí
+        # solo se persiste el ESTADO/auditoría de cada ejecución. steps_json = lista
+        # [{id, action, status, error, created_ref}]. status del run:
+        # running | completed | failed | rolled_back | rollback_partial.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS blueprint_runs (
+                run_id       TEXT PRIMARY KEY,
+                blueprint_id TEXT NOT NULL,
+                name         TEXT NOT NULL,
+                owner        TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'running',
+                inputs_json  TEXT NOT NULL DEFAULT '{}',
+                steps_json   TEXT NOT NULL DEFAULT '[]',
+                created_at   REAL NOT NULL,
+                updated_at   REAL NOT NULL
+            )
+        """)
+        # Definiciones de Blueprints editables por el usuario (constructor visual). source:
+        # 'builtin' (sembrado desde blueprints/*.yaml) | 'user' (creado en la UI).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS blueprints (
+                id             TEXT PRIMARY KEY,
+                name           TEXT NOT NULL,
+                description    TEXT NOT NULL DEFAULT '',
+                owner          TEXT NOT NULL DEFAULT '',
+                on_failure     TEXT NOT NULL DEFAULT 'halt',
+                variables_json TEXT NOT NULL DEFAULT '[]',
+                steps_json     TEXT NOT NULL DEFAULT '[]',
+                source         TEXT NOT NULL DEFAULT 'user',
+                created_at     REAL NOT NULL,
+                updated_at     REAL NOT NULL
+            )
+        """)
 
 
 def get_or_create_quota(pool_name: str) -> dict:
@@ -198,3 +231,118 @@ def get_expiry_map() -> dict:
             "SELECT vm_name, expires_at FROM vm_lifecycles WHERE status != 'reaped'"
         ).fetchall()
         return {r["vm_name"]: r["expires_at"] for r in rows}
+
+
+# ── Blueprint runs (orquestador) ────────────────────────────────────────────────
+
+import json as _json
+
+
+def create_run(run_id: str, blueprint_id: str, name: str, owner: str,
+               inputs: dict, steps: list) -> None:
+    """Registra una ejecución de blueprint en estado 'running'."""
+    now = time.time()
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO blueprint_runs
+                (run_id, blueprint_id, name, owner, status, inputs_json, steps_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)
+        """, (run_id, blueprint_id, name, owner,
+              _json.dumps(inputs), _json.dumps(steps), now, now))
+
+
+def update_run(run_id: str, status: str = None, steps: list = None) -> None:
+    """Actualiza estado y/o el log de pasos de una ejecución."""
+    sets, params = [], []
+    if status is not None:
+        sets.append("status = ?"); params.append(status)
+    if steps is not None:
+        sets.append("steps_json = ?"); params.append(_json.dumps(steps))
+    sets.append("updated_at = ?"); params.append(time.time())
+    params.append(run_id)
+    with _get_conn() as conn:
+        conn.execute(f"UPDATE blueprint_runs SET {', '.join(sets)} WHERE run_id = ?", params)
+
+
+def get_run(run_id: str) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM blueprint_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["inputs"] = _json.loads(d.pop("inputs_json"))
+        d["steps"] = _json.loads(d.pop("steps_json"))
+        return d
+
+
+def list_runs(owner: str = None, limit: int = 50) -> list:
+    """Ejecuciones recientes; si se da `owner`, solo las suyas."""
+    with _get_conn() as conn:
+        if owner is not None:
+            rows = conn.execute(
+                "SELECT * FROM blueprint_runs WHERE owner = ? ORDER BY created_at DESC LIMIT ?",
+                (owner, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM blueprint_runs ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["inputs"] = _json.loads(d.pop("inputs_json"))
+            d["steps"] = _json.loads(d.pop("steps_json"))
+            out.append(d)
+        return out
+
+
+# ── Blueprints (definiciones editables) ─────────────────────────────────────────
+
+def create_blueprint(bp_id: str, name: str, description: str, owner: str,
+                     on_failure: str, variables: list, steps: list,
+                     source: str = "user") -> None:
+    now = time.time()
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO blueprints
+                (id, name, description, owner, on_failure, variables_json, steps_json, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (bp_id, name, description, owner, on_failure,
+              _json.dumps(variables), _json.dumps(steps), source, now, now))
+
+
+def update_blueprint(bp_id: str, name: str, description: str,
+                     on_failure: str, variables: list, steps: list) -> None:
+    with _get_conn() as conn:
+        conn.execute("""
+            UPDATE blueprints SET name = ?, description = ?, on_failure = ?,
+                variables_json = ?, steps_json = ?, updated_at = ?
+            WHERE id = ?
+        """, (name, description, on_failure, _json.dumps(variables),
+              _json.dumps(steps), time.time(), bp_id))
+
+
+def delete_blueprint(bp_id: str) -> None:
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM blueprints WHERE id = ?", (bp_id,))
+
+
+def _row_to_blueprint(row) -> dict:
+    d = dict(row)
+    d["variables"] = _json.loads(d.pop("variables_json"))
+    d["steps"] = _json.loads(d.pop("steps_json"))
+    return d
+
+
+def get_blueprint_row(bp_id: str) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute("SELECT * FROM blueprints WHERE id = ?", (bp_id,)).fetchone()
+        return _row_to_blueprint(row) if row else None
+
+
+def list_blueprint_rows() -> list:
+    with _get_conn() as conn:
+        rows = conn.execute("SELECT * FROM blueprints ORDER BY name").fetchall()
+        return [_row_to_blueprint(r) for r in rows]

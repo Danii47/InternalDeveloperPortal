@@ -1,4 +1,6 @@
 import datetime
+import threading
+import time
 import uuid
 
 import jwt
@@ -13,6 +15,33 @@ from services.proxmox_client import ProxmoxIDPClient
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+# ── Rate-limiting de login (anti fuerza-bruta) ──────────────────────────────────
+# Cuenta SOLO los intentos FALLIDOS por IP en una ventana; un login correcto no acumula.
+_LOGIN_WINDOW = 300      # segundos
+_LOGIN_MAX_FAILS = 10    # fallos permitidos por IP y ventana
+_login_fails: dict = {}  # ip -> [timestamps de fallos]
+_login_lock = threading.Lock()
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _too_many_fails(ip: str) -> bool:
+    now = time.time()
+    with _login_lock:
+        recent = [t for t in _login_fails.get(ip, []) if now - t < _LOGIN_WINDOW]
+        _login_fails[ip] = recent
+        return len(recent) >= _LOGIN_MAX_FAILS
+
+
+def _record_fail(ip: str) -> None:
+    with _login_lock:
+        _login_fails.setdefault(ip, []).append(time.time())
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -21,15 +50,23 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def auth_login(body: LoginRequest, response: Response):
+def auth_login(body: LoginRequest, response: Response, request: Request):
     """
     Validates credentials against Proxmox (pve/pam realm).
     On success creates an impersonation session and returns a JWT in an HttpOnly cookie.
     """
+    ip = _client_ip(request)
+    if _too_many_fails(ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos fallidos. Espera unos minutos e inténtalo de nuevo.",
+        )
+
     _purge_stale_sessions()
     try:
         user_client = ProxmoxIDPClient.from_user(body.username, body.realm, body.password)
     except Exception:
+        _record_fail(ip)
         raise HTTPException(
             status_code=401,
             detail="Credenciales inválidas o usuario sin acceso a Proxmox",

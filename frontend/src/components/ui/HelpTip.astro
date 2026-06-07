@@ -1,0 +1,11 @@
+---
+// Icono "?" con tooltip accesible para marcado estático.
+interface Props { text: string; }
+const { text } = Astro.props;
+---
+<span class="relative inline-flex group align-middle ml-1">
+  <button type="button" tabindex="0" aria-label="Ayuda"
+    class="w-3.5 h-3.5 inline-flex items-center justify-center rounded-full bg-slate-700 text-slate-300 text-[9px] font-bold leading-none hover:bg-blue-600 hover:text-white transition-colors cursor-help">?</button>
+  <span role="tooltip"
+    class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-56 px-2.5 py-1.5 rounded-md bg-slate-950 border border-slate-700 text-[10px] leading-snug text-slate-300 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 z-50 shadow-xl">{text}</span>
+</span>

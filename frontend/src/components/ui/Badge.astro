@@ -1,0 +1,13 @@
+---
+// Badge de estado reutilizable. Mapea estados comunes a las clases .ui-badge-*.
+interface Props { status: string; label?: string; class?: string; }
+const { status, label, class: extra = '' } = Astro.props;
+const MAP: Record<string, string> = {
+  running: 'ui-badge-running', pending: 'ui-badge-idle',
+  completed: 'ui-badge-ok', success: 'ui-badge-ok', active: 'ui-badge-ok', ok: 'ui-badge-ok',
+  failed: 'ui-badge-error', error: 'ui-badge-error', rollback_partial: 'ui-badge-error',
+  rolled_back: 'ui-badge-warn', expiring: 'ui-badge-warn', warn: 'ui-badge-warn',
+};
+const cls = MAP[status] || 'ui-badge-idle';
+---
+<span class:list={["ui-badge", cls, extra]}>{label ?? status}</span>

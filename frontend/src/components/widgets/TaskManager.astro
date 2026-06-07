@@ -28,6 +28,8 @@
     failed: 'bg-red-950/80 border-red-500/30 text-red-300'
   };
 
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
   async function pollTasks() {
     try {
       const res = await apiFetch('/tasks');
@@ -86,10 +88,10 @@
         taskEl.innerHTML = `
           <div class="mt-0.5 flex-shrink-0">${ICONS[task.status]}</div>
           <div class="flex-1 min-w-0">
-            <p class="text-sm font-bold text-white truncate capitalize">${task.type}</p>
-            <p class="text-xs truncate opacity-80 mt-0.5">${task.target}</p>
-            ${task.status === 'running' ? `<p class="text-[10px] uppercase tracking-wider font-bold text-blue-400 mt-2 animate-pulse">Ejecutando Terraform...</p>` : ''}
-            ${task.status === 'failed' ? `<p class="text-[10px] text-red-400 mt-2 leading-relaxed bg-red-950/50 p-2 rounded border border-red-500/20">${task.error}</p>` : ''}
+            <p class="text-sm font-bold text-white truncate capitalize">${esc(task.type)}</p>
+            <p class="text-xs truncate opacity-80 mt-0.5">${esc(task.target)}</p>
+            ${task.status === 'running' ? `<p class="text-[10px] uppercase tracking-wider font-bold text-blue-400 mt-2 animate-pulse">Ejecutando…</p>` : ''}
+            ${task.status === 'failed' ? `<p class="text-[10px] text-red-400 mt-2 leading-relaxed bg-red-950/50 p-2 rounded border border-red-500/20 break-words">${esc(task.error)}</p>` : ''}
           </div>
         `;
       }

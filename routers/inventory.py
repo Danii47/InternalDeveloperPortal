@@ -251,7 +251,16 @@ def get_tasks(sess: UserSession = Depends(get_current_session)):
         if task_owner is not None and task_owner != sess.userid:
             continue
 
-        active_tasks.append(task)
+        # Proyección pública: excluye campos internos (_event no es serializable).
+        active_tasks.append({
+            "id": task["id"],
+            "type": task["type"],
+            "target": task["target"],
+            "status": task["status"],
+            "error": task.get("error"),
+            "owner": task_owner,
+            "updated_at": task.get("updated_at"),
+        })
 
     for k in keys_to_delete:
         del tasks_db[k]

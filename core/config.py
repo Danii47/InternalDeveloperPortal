@@ -13,6 +13,15 @@ _pve = urlparse(PROXMOX_URL if PROXMOX_URL else "https://localhost:8006")
 PROXMOX_HOST: str = _pve.hostname or "localhost"
 PROXMOX_PORT: int = _pve.port or 8006
 
+# TLS hacia Proxmox. Por defecto NO se verifica (certificados autofirmados, comportamiento
+# histórico). En producción: IDP_PROXMOX_VERIFY=true y, opcionalmente, IDP_PROXMOX_CA=/ruta/ca.pem
+PROXMOX_VERIFY_SSL: bool = os.getenv("IDP_PROXMOX_VERIFY", "false").lower() == "true"
+PROXMOX_CA_PATH: str = os.getenv("IDP_PROXMOX_CA", "").strip() or ""
+
+def proxmox_tls_verify():
+    """Valor para `verify` de requests/proxmoxer: ruta de CA, o bool. Default False (inseguro)."""
+    return PROXMOX_CA_PATH if PROXMOX_CA_PATH else PROXMOX_VERIFY_SSL
+
 # ── Auth / JWT ────────────────────────────────────────────────────────────────
 SECRET_KEY: str = os.getenv("IDP_SECRET_KEY", "")
 if not SECRET_KEY:

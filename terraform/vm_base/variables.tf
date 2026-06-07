@@ -1,3 +1,14 @@
+variable "proxmox_endpoint" {
+  type        = string
+  description = "Endpoint de la API de Proxmox (ej: https://192.168.1.10:8006/). Inyectado desde PROXMOX_URL."
+}
+
+variable "proxmox_insecure" {
+  type        = bool
+  description = "Permitir certificado TLS autofirmado del endpoint de Proxmox."
+  default     = true
+}
+
 variable "api_token" {
   type        = string
   description = "Token de API de Proxmox"
@@ -75,6 +86,12 @@ variable "ssh_keys" {
 variable "network_bridge" {
   type        = string
   description = "El Bridge o VNet donde se conectará la interfaz de red (ej: vmbr0, vnet1, tmpvnet)"
+}
+
+variable "network_bridges" {
+  type        = list(string)
+  description = "Lista de Bridges/VNets para multi-NIC (routers). Vacío = usar network_bridge único."
+  default     = []
 }
 
 variable "admin_user" {

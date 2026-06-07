@@ -1,3 +1,9 @@
+locals {
+  # Multi-NIC: usa la lista network_bridges si viene; si no, cae al network_bridge único
+  # (compatibilidad con el despliegue normal). Cada elemento = una interfaz de red.
+  bridges = length(var.network_bridges) > 0 ? var.network_bridges : [var.network_bridge]
+}
+
 resource "proxmox_virtual_environment_vm" "server" {
   vm_id     = var.vm_id
   name      = var.vm_name
@@ -34,8 +40,11 @@ resource "proxmox_virtual_environment_vm" "server" {
     dedicated = var.vm_ram
   }
 
-  network_device {
-    bridge = var.network_bridge
+  dynamic "network_device" {
+    for_each = local.bridges
+    content {
+      bridge = network_device.value
+    }
   }
 
   initialization {

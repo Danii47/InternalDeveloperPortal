@@ -1,0 +1,9 @@
+---
+// Checkbox etiquetado (el estilo custom lo aplica ui.css globalmente).
+interface Props { id?: string; name?: string; checked?: boolean; label?: string; class?: string; }
+const { id, name, checked = false, label, class: extra = '' } = Astro.props;
+---
+<label class:list={["flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none", extra]}>
+  <input type="checkbox" id={id} name={name} checked={checked} />
+  {label && <span>{label}</span>}
+</label>

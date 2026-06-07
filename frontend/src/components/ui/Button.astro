@@ -1,0 +1,13 @@
+---
+// Botón reutilizable con variantes y micro-interacción (clases en ui.css).
+interface Props {
+  variant?: 'primary' | 'ghost' | 'danger';
+  type?: 'button' | 'submit' | 'reset';
+  id?: string;
+  class?: string;
+}
+const { variant = 'primary', type = 'button', id, class: extra = '' } = Astro.props;
+---
+<button type={type} id={id} class:list={["ui-btn", `ui-btn-${variant}`, extra]}>
+  <slot />
+</button>

@@ -1,0 +1,847 @@
+---
+import Layout from '../../layouts/Layout.astro';
+
+// Página exclusiva de administradores (mismo guard SSR que /quotas).
+if (Astro.locals.user?.realm !== 'pam') {
+  return Astro.redirect('/');
+}
+---
+
+<Layout title="Blueprints | Proxmox IDP">
+  <div class="mb-6 flex items-end justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold text-white">Blueprints</h1>
+      <p class="text-sm text-slate-400">Recetas de orquestación: crea infraestructura compleja en fases secuenciales.</p>
+    </div>
+    <button id="bpNewBtn" class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold py-2 px-4 rounded-lg transition-colors flex items-center gap-2">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+      Crear Blueprint
+    </button>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+    <div class="lg:col-span-2">
+      <div id="bpGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4 ui-stagger">
+        <div class="col-span-full text-sm text-slate-500 py-6 text-center">Cargando blueprints…</div>
+      </div>
+    </div>
+
+    <div class="lg:col-span-1">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl ui-fade-in">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2 border-b border-slate-800 pb-2">
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          Ejecuciones recientes
+        </h3>
+        <div id="bpRuns" class="space-y-2 text-sm max-h-[60vh] overflow-y-auto">
+          <div class="text-slate-500 text-xs py-2">Sin ejecuciones aún.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de ejecución -->
+  <dialog id="bpModal" class="m-auto max-h-[90vh] bg-slate-900 border border-slate-800 rounded-xl p-0 w-full max-w-lg text-slate-300 shadow-2xl backdrop:bg-black/60">
+    <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+      <h2 id="bpModalTitle" class="text-lg font-semibold text-white">Ejecutar Blueprint</h2>
+      <button id="bpModalClose" class="text-slate-500 hover:text-white">✕</button>
+    </div>
+    <div class="p-5">
+      <p id="bpModalDesc" class="text-xs text-slate-400 mb-4"></p>
+      <form id="bpForm" class="space-y-4">
+        <div id="bpFormFields" class="space-y-4"></div>
+        <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+          <input type="checkbox" id="bpRollback" class="text-blue-500 focus:ring-blue-500 bg-slate-900 border-slate-700">
+          Revertir automáticamente si algún paso falla (rollback)
+        </label>
+        <div id="bpError" class="hidden bg-red-950/60 border border-red-700/50 rounded-lg px-3 py-2 text-xs text-red-300"></div>
+        <button type="submit" id="bpRunBtn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 px-4 rounded-lg transition-colors flex justify-center items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+          Ejecutar
+        </button>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal constructor -->
+  <dialog id="bpBuilder" class="m-auto max-h-[90vh] bg-slate-900 border border-slate-800 rounded-xl p-0 w-full max-w-3xl text-slate-300 shadow-2xl backdrop:bg-black/60">
+    <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-900 z-10">
+      <h2 id="builderTitle" class="text-lg font-semibold text-white">Nuevo Blueprint</h2>
+      <button id="builderClose" class="text-slate-500 hover:text-white">✕</button>
+    </div>
+    <div class="p-5 space-y-6 max-h-[78vh] overflow-y-auto">
+      <!-- Meta -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Nombre</label>
+          <input id="bldName" type="text" placeholder="Mi receta" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Ante fallo</label>
+          <select id="bldOnFailure" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none">
+            <option value="halt">Detener (halt)</option>
+            <option value="rollback">Revertir (rollback)</option>
+          </select>
+        </div>
+        <div class="sm:col-span-2">
+          <label class="block text-xs font-medium text-slate-400 mb-1">Descripción</label>
+          <input id="bldDesc" type="text" placeholder="Qué hace esta receta" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none">
+        </div>
+      </div>
+
+      <!-- Variables -->
+      <div>
+        <div class="flex items-center justify-between mb-2 border-b border-slate-800 pb-2">
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Variables (inputs al ejecutar)</h3>
+          <button id="addVarBtn" class="text-xs text-blue-400 hover:text-blue-300 font-medium">➕ Añadir variable</button>
+        </div>
+        <div id="varList" class="space-y-2"></div>
+      </div>
+
+      <!-- Fases -->
+      <div>
+        <div class="flex items-center justify-between mb-2 border-b border-slate-800 pb-2">
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Fases (acciones secuenciales)</h3>
+          <div class="flex items-center gap-2">
+            <select id="paletteSelect" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white outline-none"></select>
+            <button id="addStepBtn" class="text-xs text-blue-400 hover:text-blue-300 font-medium">➕ Añadir fase</button>
+          </div>
+        </div>
+        <div id="stepList" class="space-y-3"></div>
+      </div>
+
+      <div id="builderError" class="hidden bg-red-950/60 border border-red-700/50 rounded-lg px-3 py-2 text-xs text-red-300"></div>
+      <div class="flex items-center gap-3">
+        <button id="builderSave" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 px-4 rounded-lg transition-colors">Guardar</button>
+        <button id="builderCancel" class="px-4 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white border border-slate-700">Cancelar</button>
+      </div>
+    </div>
+  </dialog>
+</Layout>
+
+<script>
+  import { apiFetch } from '@/lib/api.ts';
+  import { toast, helpIcon, statusBadgeClass } from '@/lib/ui.ts';
+
+  const INPUT = 'w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none';
+  const SELECT = INPUT + ' focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed';
+  const MULTI_TYPES = ['bridge_multi', 'tool_multi'];
+  const INT_TYPES = ['int', 'slider'];
+  const VAR_TYPES = ['string', 'text', 'int', 'slider', 'select', 'cidr', 'node_select', 'template_select', 'secret', 'bool'];
+
+  // ── Estado / elementos ────────────────────────────────────────────────────────
+  const grid = document.getElementById('bpGrid') as HTMLElement;
+  const runsBox = document.getElementById('bpRuns') as HTMLElement;
+
+  // Run modal
+  const modal = document.getElementById('bpModal') as HTMLDialogElement;
+  const modalTitle = document.getElementById('bpModalTitle') as HTMLElement;
+  const modalDesc = document.getElementById('bpModalDesc') as HTMLElement;
+  const formFields = document.getElementById('bpFormFields') as HTMLElement;
+  const errorBox = document.getElementById('bpError') as HTMLElement;
+  const rollbackChk = document.getElementById('bpRollback') as HTMLInputElement;
+  const runBtn = document.getElementById('bpRunBtn') as HTMLButtonElement;
+
+  // Builder modal
+  const builder = document.getElementById('bpBuilder') as HTMLDialogElement;
+  const builderTitle = document.getElementById('builderTitle') as HTMLElement;
+  const bldName = document.getElementById('bldName') as HTMLInputElement;
+  const bldDesc = document.getElementById('bldDesc') as HTMLInputElement;
+  const bldOnFailure = document.getElementById('bldOnFailure') as HTMLSelectElement;
+  const varList = document.getElementById('varList') as HTMLElement;
+  const stepList = document.getElementById('stepList') as HTMLElement;
+  const paletteSelect = document.getElementById('paletteSelect') as HTMLSelectElement;
+  const builderError = document.getElementById('builderError') as HTMLElement;
+
+  let ACTIONS: Record<string, any> = {};
+  let state: any = { id: null, name: '', description: '', on_failure: 'halt', variables: [], steps: [] };
+
+  const TERMINAL = ['completed', 'failed', 'rolled_back', 'rollback_partial'];
+
+  // ── Catálogo ────────────────────────────────────────────────────────────────
+  async function loadBlueprints() {
+    try {
+      const res = await apiFetch('/admin/blueprints');
+      if (!res.ok) throw new Error();
+      const bps = await res.json();
+      grid.innerHTML = '';
+      if (!bps.length) { grid.innerHTML = '<div class="col-span-full text-sm text-slate-500 py-6 text-center">No hay blueprints. Crea el primero.</div>'; return; }
+      bps.forEach((bp: any) => grid.appendChild(renderCard(bp)));
+    } catch (e) {
+      grid.innerHTML = '<div class="col-span-full text-sm text-red-400 py-6 text-center">No se pudo cargar el catálogo.</div>';
+    }
+  }
+
+  function renderCard(bp: any): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl flex flex-col gap-3';
+    const isUser = bp.source === 'user';
+    const badge = isUser
+      ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/20 uppercase">Usuario</span>'
+      : '<span class="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-800 text-slate-400 border-slate-700 uppercase">Integrado</span>';
+    card.innerHTML = `
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0"><span class="text-2xl">🧩</span><h3 class="text-base font-semibold text-white truncate">${bp.name}</h3></div>
+        ${badge}
+      </div>
+      <p class="text-xs text-slate-400 flex-1">${bp.description || ''}</p>
+      <div class="text-[11px] text-slate-500">${bp.variables.length} parámetros · ${bp.source === 'user' ? bp.owner || '' : 'plantilla'}</div>`;
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-2 flex-wrap';
+    const runBtnEl = mkBtn('Ejecutar', 'bg-blue-600 hover:bg-blue-500 text-white', () => openRun(bp));
+    runBtnEl.classList.add('flex-1');
+    row.appendChild(runBtnEl);
+    row.appendChild(mkBtn('Duplicar', 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700', () => duplicate(bp.id)));
+    if (isUser) {
+      row.appendChild(mkBtn('Editar', 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700', () => openEditor(bp.id)));
+      row.appendChild(mkBtn('Eliminar', 'bg-red-900/40 hover:bg-red-900/70 text-red-300 border border-red-800/50', () => removeBlueprint(bp.id, bp.name)));
+    }
+    card.appendChild(row);
+    return card;
+  }
+
+  function mkBtn(text: string, cls: string, onClick: () => void): HTMLButtonElement {
+    const b = document.createElement('button');
+    b.className = `text-xs font-semibold py-1.5 px-3 rounded-lg transition-colors ${cls}`;
+    b.textContent = text;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  // ── EJECUCIÓN (formulario dinámico desde variables) ───────────────────────────
+  function buildField(v: any) {
+    const wrap = document.createElement('div');
+    const isRange = v.type === 'slider';
+    const lab = document.createElement('label');
+    lab.className = 'block text-xs font-medium text-slate-400 mb-1' + (isRange ? ' flex justify-between' : '');
+    lab.innerHTML = v.label + (v.required === false ? ' <span class="text-slate-600">(opcional)</span>' : '') + (isRange ? ' <span class="text-blue-400" data-val></span>' : '');
+    if (v.help) lab.appendChild(helpIcon(v.help));
+    wrap.appendChild(lab);
+    let control: any;
+    if (v.type === 'slider' || v.type === 'int') {
+      control = document.createElement('input'); control.type = isRange ? 'range' : 'number';
+      if (v.min != null) control.min = v.min; if (v.max != null) control.max = v.max; if (v.step != null) control.step = v.step;
+      control.value = v.default ?? v.min ?? 0; control.className = isRange ? 'w-full accent-blue-500' : INPUT;
+    } else if (v.type === 'select') {
+      control = document.createElement('select'); control.className = SELECT;
+      (v.options || []).forEach((o: any) => { const val = (o && o.value != null) ? o.value : o; const t = (o && o.label != null) ? o.label : o; control.innerHTML += `<option value="${val}">${t}</option>`; });
+    } else if (v.type === 'node_select') {
+      control = document.createElement('select'); control.className = SELECT; control.innerHTML = '<option value="">Cargando…</option>';
+      apiFetch('/nodes').then(r => r.json()).then((ns: string[]) => { control.innerHTML = '<option value="">Selecciona…</option>' + ns.map(n => `<option value="${n}">${n}</option>`).join(''); }).catch(() => {});
+    } else if (v.type === 'template_select') {
+      control = document.createElement('select'); control.className = SELECT; control.disabled = true; control.innerHTML = '<option value="">Selecciona un nodo primero</option>';
+    } else {
+      control = document.createElement('input'); control.type = v.type === 'secret' ? 'password' : 'text'; control.className = INPUT;
+      if (v.placeholder) control.placeholder = v.placeholder;
+    }
+    control.dataset.key = v.key; if (v.depends_on) control.dataset.dependsOn = v.depends_on;
+    wrap.appendChild(control);
+    if (isRange) { const s = lab.querySelector('[data-val]') as HTMLElement; s.textContent = control.value; control.addEventListener('input', () => s.textContent = control.value); }
+    return { wrap, control, v };
+  }
+
+  let currentRunBp: any = null;
+  const expandedRuns = new Set<string>();   // run_ids con el timeline desplegado en el panel
+
+  function openRun(bp: any) {
+    currentRunBp = bp;
+    modalTitle.textContent = bp.name; modalDesc.textContent = bp.description || '';
+    errorBox.classList.add('hidden');
+    runBtn.disabled = false; runBtn.innerHTML = 'Ejecutar'; formFields.innerHTML = '';
+    rollbackChk.checked = bp.on_failure === 'rollback';
+    const built = bp.variables.map((v: any) => { const f = buildField(v); formFields.appendChild(f.wrap); return f; });
+    const byKey: Record<string, HTMLElement> = {}; built.forEach((f: any) => byKey[f.v.key] = f.control);
+    built.forEach((f: any) => {
+      if (f.v.type === 'template_select' && f.v.depends_on) {
+        const dep = byKey[f.v.depends_on] as HTMLSelectElement; if (!dep) return;
+        const load = async () => {
+          const node = dep.value;
+          if (!node) { f.control.disabled = true; f.control.innerHTML = '<option value="">Selecciona un nodo primero</option>'; return; }
+          f.control.disabled = false; f.control.innerHTML = '<option value="">Cargando…</option>';
+          try { const t = await (await apiFetch(`/nodes/${node}/templates`)).json(); f.control.innerHTML = '<option value="">Selecciona…</option>' + Object.entries(t).map(([l, id]) => `<option value="${id}">${l}</option>`).join(''); }
+          catch (e) { f.control.innerHTML = '<option value="">Error</option>'; }
+        };
+        dep.addEventListener('change', load);
+      }
+    });
+    modal.showModal();
+  }
+
+  document.getElementById('bpModalClose')!.addEventListener('click', () => modal.close());
+
+  const ERR_CLS = 'mt-1 bg-red-950/60 border border-red-700/50 rounded-lg px-3 py-2 text-xs text-red-300 space-y-0.5';
+  const WARN_CLS = 'mt-1 bg-amber-950/50 border border-amber-700/50 rounded-lg px-3 py-2 text-xs text-amber-300 space-y-0.5';
+  const showList = (cls: string, title: string, items: string[]) => {
+    errorBox.className = cls;
+    errorBox.innerHTML = `<div class="font-semibold mb-1">${title}</div>` + items.map(x => `<div>• ${x}</div>`).join('');
+    errorBox.classList.remove('hidden');
+  };
+
+  document.getElementById('bpForm')!.addEventListener('submit', async (e) => {
+    e.preventDefault(); errorBox.classList.add('hidden');
+    const inputs: Record<string, any> = {};
+    formFields.querySelectorAll('[data-key]').forEach((el: any) => inputs[el.dataset.key] = el.value);
+    // Validación cliente previa (feedback instantáneo; el backend revalida).
+    const verrs: string[] = [];
+    (currentRunBp.variables || []).forEach((v: any) => {
+      const val = (inputs[v.key] == null ? '' : String(inputs[v.key])).trim();
+      if (v.required !== false && val === '') { verrs.push(`«${v.label}» es obligatorio.`); return; }
+      if (val === '') return;
+      if (v.type === 'cidr' && !looksLikeCidr(val)) verrs.push(`«${v.label}» debe ser un CIDR válido (ej. 10.0.0.0/24).`);
+      if (v.type === 'int' || v.type === 'slider') {
+        const n = Number(val);
+        if (isNaN(n) || (v.min != null && n < v.min) || (v.max != null && n > v.max))
+          verrs.push(`«${v.label}» fuera de rango${v.min != null && v.max != null ? ` (${v.min}-${v.max})` : ''}.`);
+      }
+    });
+    if (verrs.length) { showList(ERR_CLS, 'Revisa el formulario', verrs); return; }
+    const body = JSON.stringify({ inputs, rollback: rollbackChk.checked });
+    const reset = () => { runBtn.disabled = false; runBtn.innerHTML = 'Ejecutar'; };
+    runBtn.disabled = true; runBtn.innerHTML = '<span class="animate-spin">⚙️</span> Validando…';
+    try {
+      // Pre-flight: bloquea si hay errores; muestra avisos y continúa.
+      const pres = await apiFetch(`/admin/blueprints/${currentRunBp.id}/preflight`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      const pf = await pres.json();
+      if (pres.ok && pf.errors && pf.errors.length) { showList(ERR_CLS, 'Pre-flight: corrige antes de lanzar', pf.errors); reset(); return; }
+      if (pres.ok && pf.warnings && pf.warnings.length) showList(WARN_CLS, 'Avisos', pf.warnings);
+
+      runBtn.innerHTML = '<span class="animate-spin">⚙️</span> Lanzando…';
+      const res = await apiFetch(`/admin/blueprints/${currentRunBp.id}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      const data = await res.json();
+      if (!res.ok) {
+        const det: any = data.detail;
+        if (det && det.errors) showList(ERR_CLS, det.message || 'Error', det.errors);
+        else showList(ERR_CLS, 'Error', [typeof det === 'string' ? det : 'Error al lanzar']);
+        reset(); return;
+      }
+      // La ejecución corre en segundo plano (tarea persistida). Cerramos el modal: el panel
+      // "Ejecuciones" muestra el progreso en vivo y sobrevive a recargas o a salir de la página.
+      modal.close();
+      expandedRuns.add(data.run_id);
+      toast('Ejecución lanzada en segundo plano. Puedes recargar o salir; sigue su avance en el panel.', 'success');
+      loadRuns();
+    } catch (err) { showList(ERR_CLS, 'Error', ['Fallo de conexión con la API']); reset(); }
+  });
+
+  function stepIcon(s: string) { return s === 'completed' ? '<span class="text-emerald-400">✓</span>' : s === 'failed' ? '<span class="text-red-400">✗</span>' : s === 'running' ? '<span class="text-blue-400 animate-pulse">●</span>' : s === 'rolled_back' || s === 'rollback_partial' ? '<span class="text-orange-400">↩</span>' : '<span class="text-slate-600">○</span>'; }
+
+  // ── CONSTRUCTOR ────────────────────────────────────────────────────────────────
+  function builderShowErr(el: HTMLElement, msg: string) { el.textContent = msg; el.classList.remove('hidden'); }
+  function varKeys(): string[] { return state.variables.map((v: any) => v.key).filter(Boolean); }
+
+  async function loadActions() {
+    if (Object.keys(ACTIONS).length) return;
+    try {
+      ACTIONS = await (await apiFetch('/admin/blueprints/actions')).json();
+      paletteSelect.innerHTML = Object.entries(ACTIONS).map(([id, a]: any) => `<option value="${id}">${a.label}</option>`).join('');
+    } catch (e) { paletteSelect.innerHTML = '<option value="">(error)</option>'; }
+  }
+
+  async function openEditor(id: string) {
+    await loadActions();
+    const bp = await (await apiFetch(`/admin/blueprints/${id}`)).json();
+    state = { id: bp.id, name: bp.name, description: bp.description, on_failure: bp.on_failure, variables: bp.variables || [], steps: bp.steps || [] };
+    fillBuilder('Editar Blueprint');
+  }
+  async function openNew() {
+    await loadActions();
+    state = { id: null, name: '', description: '', on_failure: 'halt', variables: [], steps: [] };
+    fillBuilder('Nuevo Blueprint');
+  }
+  async function duplicate(id: string) {
+    await loadActions();
+    const bp = await (await apiFetch(`/admin/blueprints/${id}`)).json();
+    state = { id: null, name: bp.name + ' (copia)', description: bp.description, on_failure: bp.on_failure, variables: JSON.parse(JSON.stringify(bp.variables || [])), steps: JSON.parse(JSON.stringify(bp.steps || [])) };
+    fillBuilder('Duplicar Blueprint');
+  }
+
+  function fillBuilder(title: string) {
+    builderTitle.textContent = title;
+    bldName.value = state.name; bldDesc.value = state.description; bldOnFailure.value = state.on_failure;
+    builderError.classList.add('hidden');
+    renderVars(); renderSteps();
+    builder.showModal();
+  }
+
+  bldName.addEventListener('input', () => state.name = bldName.value);
+  bldDesc.addEventListener('input', () => state.description = bldDesc.value);
+  bldOnFailure.addEventListener('change', () => state.on_failure = bldOnFailure.value);
+
+  // — Variables —
+  document.getElementById('addVarBtn')!.addEventListener('click', () => {
+    state.variables.push({ key: '', label: '', type: 'string', required: true });
+    renderVars();
+  });
+
+  function renderVars() {
+    varList.innerHTML = '';
+    if (!state.variables.length) { varList.innerHTML = '<div class="text-[11px] text-slate-600">Sin variables. (Opcional)</div>'; }
+    state.variables.forEach((v: any, i: number) => {
+      const c = document.createElement('div');
+      c.className = 'bg-slate-950/50 border border-slate-800 rounded-lg p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 items-end';
+      c.appendChild(fieldInput('key', 'key', v.key, (val) => v.key = val));
+      c.appendChild(fieldInput('label', 'Etiqueta', v.label, (val) => v.label = val));
+      const typeSel = fieldSelect('type', VAR_TYPES.map(t => [t, t]), v.type, (val) => { v.type = val; renderVars(); });
+      c.appendChild(typeSel);
+      // extras por tipo
+      if (INT_TYPES.includes(v.type)) {
+        c.appendChild(fieldInput('min', 'min', v.min, (val) => v.min = val === '' ? undefined : Number(val), 'number'));
+        c.appendChild(fieldInput('max', 'max', v.max, (val) => v.max = val === '' ? undefined : Number(val), 'number'));
+        c.appendChild(fieldInput('default', 'default', v.default, (val) => v.default = val === '' ? undefined : Number(val), 'number'));
+      } else if (v.type === 'select') {
+        c.appendChild(fieldInput('options', 'opciones (coma)', (v.options || []).join(','), (val) => v.options = val.split(',').map((s: string) => s.trim()).filter(Boolean)));
+      } else {
+        c.appendChild(fieldInput('default', 'default', v.default, (val) => v.default = val || undefined));
+        if (v.type === 'string') c.appendChild(fieldInput('pattern (regex)', '^[a-z][a-z0-9]{0,7}$', v.pattern, (val) => v.pattern = val || undefined));
+      }
+      // flags + borrar
+      const flags = document.createElement('div'); flags.className = 'flex items-center gap-3 col-span-2 sm:col-span-4';
+      flags.appendChild(checkbox('Requerida', v.required !== false, (ch) => v.required = ch));
+      flags.appendChild(checkbox('Secreta', !!v.secret, (ch) => v.secret = ch));
+      const del = mkBtn('Eliminar', 'bg-red-900/40 hover:bg-red-900/70 text-red-300 border border-red-800/50 ml-auto', () => { state.variables.splice(i, 1); renderVars(); });
+      flags.appendChild(del);
+      c.appendChild(flags);
+      varList.appendChild(c);
+    });
+  }
+
+  // — Fases —
+  document.getElementById('addStepBtn')!.addEventListener('click', () => {
+    const action = paletteSelect.value; if (!action || !ACTIONS[action]) return;
+    const params: Record<string, any> = {};
+    (ACTIONS[action].params || []).forEach((p: any) => { if (p.default != null) params[p.key] = p.default; });
+    if (action === 'deploy_vms') Object.assign(params, { count: 1, cpu: 2, ram_mb: 2048, disk_gb: 20, admin_user: 'root', ip_mode: 'dhcp', ttl_hours: 24, bridges: [], app_ids: [] });
+    state.steps.push({ id: `${action}-${state.steps.length + 1}`, action, name: ACTIONS[action].label, params });
+    renderSteps();
+  });
+
+  function renderSteps() {
+    stepList.innerHTML = '';
+    if (!state.steps.length) { stepList.innerHTML = '<div class="text-[11px] text-slate-600">Sin fases. Añade la primera desde la paleta ↑</div>'; }
+    state.steps.forEach((s: any, i: number) => {
+      const schema = ACTIONS[s.action] || { label: s.action, params: [] };
+      const c = document.createElement('div');
+      c.className = 'bg-slate-950/50 border border-slate-800 rounded-lg p-3';
+      const head = document.createElement('div');
+      head.className = 'flex items-center justify-between mb-2';
+      head.innerHTML = `<div class="text-sm font-semibold text-white flex items-center gap-2"><span class="text-[10px] text-slate-500">#${i + 1}</span> ${schema.label}</div>`;
+      const ctrls = document.createElement('div'); ctrls.className = 'flex items-center gap-1';
+      ctrls.appendChild(iconBtn('↑', () => { if (i > 0) { [state.steps[i - 1], state.steps[i]] = [state.steps[i], state.steps[i - 1]]; renderSteps(); } }));
+      ctrls.appendChild(iconBtn('↓', () => { if (i < state.steps.length - 1) { [state.steps[i + 1], state.steps[i]] = [state.steps[i], state.steps[i + 1]]; renderSteps(); } }));
+      ctrls.appendChild(iconBtn('✕', () => { state.steps.splice(i, 1); renderSteps(); }));
+      head.appendChild(ctrls);
+      c.appendChild(head);
+      // nombre del paso
+      c.appendChild(fieldInput('Nombre del paso', 'Etiqueta visible del paso (admite {{var}})', s.name, (val) => s.name = val, 'text', 'Solo es el nombre que verás en el progreso. No es el nombre de ningún recurso.'));
+      // params: deploy_vms tiene editor enriquecido (como provisionamiento); el resto, genérico.
+      if (s.action === 'deploy_vms') {
+        c.appendChild(renderDeployEditor(s));
+      } else {
+        const pg = document.createElement('div'); pg.className = 'grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2';
+        (schema.params || []).forEach((p: any) => pg.appendChild(paramControl(s, p)));
+        c.appendChild(pg);
+      }
+      stepList.appendChild(c);
+    });
+  }
+
+  function paramControl(step: any, p: any): HTMLElement {
+    const cur = step.params[p.key];
+    const setVal = (val: any) => { if (val === '' || val == null) delete step.params[p.key]; else step.params[p.key] = val; };
+    if (p.type === 'select') {
+      return fieldSelect(p.label + (p.required ? ' *' : ''), (p.options || []).map((o: any) => [o.value ?? o, o.label ?? o]), cur ?? (p.default ?? ''), setVal, p.help);
+    }
+    if (p.type === 'bool') {
+      const w = document.createElement('div'); w.className = 'flex items-end'; w.appendChild(checkbox(p.label, !!cur, (ch) => step.params[p.key] = ch)); return w;
+    }
+    if (INT_TYPES.includes(p.type)) {
+      if (p.min != null && p.max != null) {
+        if (step.params[p.key] == null) step.params[p.key] = p.default ?? p.min;
+        const w = document.createElement('div');
+        const cur0 = step.params[p.key];
+        w.innerHTML = `<label class="block text-[11px] font-medium text-slate-500 mb-0.5 flex justify-between">${p.label + (p.required ? ' *' : '')} <span class="text-blue-400" data-v>${cur0}</span></label>`;
+        const inp = document.createElement('input'); inp.type = 'range'; inp.min = p.min; inp.max = p.max; inp.step = p.step ?? 1; inp.value = cur0; inp.className = 'w-full accent-blue-500';
+        inp.addEventListener('input', () => { step.params[p.key] = Number(inp.value); (w.querySelector('[data-v]') as HTMLElement).textContent = inp.value; });
+        w.appendChild(inp); return w;
+      }
+      return fieldInput(p.label + (p.required ? ' *' : ''), '', cur, (val) => setVal(val === '' ? '' : (isNaN(Number(val)) ? val : Number(val))), 'number', p.help);
+    }
+    if (p.type === 'tool_multi') {
+      if (!Array.isArray(step.params[p.key])) step.params[p.key] = step.params[p.key] ? [step.params[p.key]] : [];
+      const w = document.createElement('div');
+      w.innerHTML = `<label class="block text-[11px] font-medium text-slate-500 mb-1">${p.label + (p.required ? ' *' : '')}</label>`;
+      w.appendChild(appToggleBox(step.params[p.key]));
+      return w;
+    }
+    if (p.type === 'zone_select') {
+      const w = document.createElement('div');
+      w.innerHTML = `<label class="block text-[11px] font-medium text-slate-500 mb-0.5">${p.label + (p.required ? ' *' : '')}</label>`;
+      if (p.help) (w.querySelector('label') as HTMLElement).appendChild(helpIcon(p.help));
+      const sel = document.createElement('select'); sel.className = SELECT;
+      sel.innerHTML = '<option value="">Cargando zonas…</option>';
+      sel.addEventListener('change', () => setVal(sel.value));
+      w.appendChild(sel);
+      getZones().then((zs: any[]) => {
+        if (!zs.length) { sel.innerHTML = '<option value="">No hay zonas SDN — créala en Proxmox</option>'; return; }
+        sel.innerHTML = '<option value="">— elige zona —</option>' + zs.map(z => `<option value="${z.zone}">${z.zone} (${z.type})</option>`).join('');
+        if (cur != null && cur !== '') sel.value = String(cur);
+      });
+      return w;
+    }
+    // texto templatable (string/text/cidr/secret/*_select/vm_name/multi) con selector de variables
+    const isMulti = MULTI_TYPES.includes(p.type);
+    const label = p.label + (p.required ? ' *' : '') + (isMulti ? ' (coma)' : '');
+    const f = fieldInput(label, '', isMulti && Array.isArray(cur) ? cur.join(',') : (cur ?? ''), setVal, p.type === 'secret' ? 'password' : 'text', p.help || '');
+    // var picker
+    const keys = varKeys();
+    if (keys.length) {
+      const input = f.querySelector('input') as HTMLInputElement;
+      const pick = document.createElement('select');
+      pick.className = 'mt-1 bg-slate-900 border border-slate-800 rounded px-1 py-0.5 text-[10px] text-slate-400';
+      pick.innerHTML = '<option value="">↘ insertar {{var}}</option>' + keys.map(k => `<option value="${k}">${k}</option>`).join('');
+      pick.addEventListener('change', () => { if (pick.value) { input.value = (input.value || '') + `{{${pick.value}}}`; setVal(input.value); pick.value = ''; } });
+      f.appendChild(pick);
+    }
+    return f;
+  }
+
+  // — helpers de inputs del builder (helpIcon viene de @/lib/ui) —
+  // Validadores cliente (ligeros; el backend es la autoridad).
+  function looksLikeIp(v: string): boolean { return /^(\d{1,3})(\.\d{1,3}){3}$/.test(v.trim()) && v.trim().split('.').every(o => +o <= 255); }
+  function looksLikeStaticCidr(v: string): boolean {
+    const m = v.trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/); if (!m) return false;
+    const ipOk = m[1].split('.').every(o => +o <= 255); const pfx = +m[2];
+    return ipOk && pfx >= 1 && pfx <= 31;   // exige máscara de red real (no /32)
+  }
+  function looksLikeCidr(v: string): boolean {
+    const m = v.trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/); if (!m) return false;
+    return m[1].split('.').every(o => +o <= 255) && +m[2] <= 32;
+  }
+
+  function fieldInput(label: string, ph: string, value: any, onInput: (v: string) => void, type = 'text', help = ''): HTMLElement {
+    const w = document.createElement('div');
+    w.innerHTML = `<label class="block text-[11px] font-medium text-slate-500 mb-0.5">${label}</label>`;
+    if (help) (w.querySelector('label') as HTMLElement).appendChild(helpIcon(help));
+    const inp = document.createElement('input'); inp.type = type; inp.placeholder = ph || '';
+    inp.value = value == null ? '' : value; inp.className = INPUT;
+    inp.addEventListener('input', () => onInput(inp.value));
+    w.appendChild(inp); return w;
+  }
+  function fieldSelect(label: string, opts: any[], value: any, onChange: (v: string) => void, help = ''): HTMLElement {
+    const w = document.createElement('div');
+    w.innerHTML = `<label class="block text-[11px] font-medium text-slate-500 mb-0.5">${label}</label>`;
+    if (help) (w.querySelector('label') as HTMLElement).appendChild(helpIcon(help));
+    const sel = document.createElement('select'); sel.className = SELECT;
+    sel.innerHTML = opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+    sel.value = value == null ? '' : value;
+    sel.addEventListener('change', () => onChange(sel.value));
+    w.appendChild(sel); return w;
+  }
+  function checkbox(label: string, checked: boolean, onChange: (c: boolean) => void): HTMLElement {
+    const l = document.createElement('label'); l.className = 'flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = checked; cb.className = 'text-blue-500 focus:ring-blue-500 bg-slate-900 border-slate-700';
+    cb.addEventListener('change', () => onChange(cb.checked));
+    l.appendChild(cb); l.appendChild(document.createTextNode(label)); return l;
+  }
+  function iconBtn(txt: string, onClick: () => void): HTMLButtonElement {
+    const b = document.createElement('button'); b.textContent = txt;
+    b.className = 'w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs';
+    b.addEventListener('click', onClick); return b;
+  }
+
+  // — editor enriquecido de deploy_vms (como la pestaña de provisionamiento) —
+  let NODES_CACHE: any = null;
+  let TOOLS_CACHE: any = null;
+  let ZONES_CACHE: any = null;
+  async function getNodes() { if (!NODES_CACHE) { try { NODES_CACHE = await (await apiFetch('/nodes')).json(); } catch (e) { NODES_CACHE = []; } } return NODES_CACHE; }
+  async function getTools() { if (!TOOLS_CACHE) { try { TOOLS_CACHE = await (await apiFetch('/tools')).json(); } catch (e) { TOOLS_CACHE = []; } } return TOOLS_CACHE; }
+  async function getZones() { if (!ZONES_CACHE) { try { ZONES_CACHE = await (await apiFetch('/admin/blueprints/sdn-zones')).json(); } catch (e) { ZONES_CACHE = []; } } return ZONES_CACHE; }
+
+  function pill(active: boolean): string {
+    return 'text-xs px-2.5 py-1 rounded-lg border cursor-pointer transition-colors ' +
+      (active ? 'border-blue-500 bg-blue-500/10 text-blue-300' : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-600');
+  }
+
+  // Botones toggle de apps (catálogo /tools). Muta la lista `list` in situ (push/splice).
+  function appToggleBox(list: string[]): HTMLElement {
+    const box = document.createElement('div'); box.className = 'flex flex-wrap gap-1.5';
+    box.innerHTML = '<span class="text-[11px] text-slate-600">Cargando…</span>';
+    getTools().then((cats: any[]) => {
+      box.innerHTML = '';
+      cats.forEach((cat: any) => cat.tools.forEach((t: any) => {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = t.name;
+        const on = () => list.includes(t.id); b.className = pill(on());
+        b.addEventListener('click', () => { const i = list.indexOf(t.id); if (i >= 0) list.splice(i, 1); else list.push(t.id); b.className = pill(on()); });
+        box.appendChild(b);
+      }));
+    });
+    return box;
+  }
+
+  function renderDeployEditor(step: any): HTMLElement {
+    const p = step.params;
+    p.count = p.count ?? 1; p.cpu = p.cpu ?? 2; p.ram_mb = p.ram_mb ?? 2048; p.disk_gb = p.disk_gb ?? 20;
+    p.admin_user = p.admin_user ?? 'root'; p.ip_mode = p.ip_mode ?? 'dhcp';
+    if (!Array.isArray(p.bridges)) p.bridges = p.bridges ? [p.bridges] : [];
+    if (!Array.isArray(p.app_ids)) p.app_ids = p.app_ids ? [p.app_ids] : [];
+    if (p.ttl_hours === undefined) p.ttl_hours = 24;
+
+    const root = document.createElement('div'); root.className = 'space-y-3 mt-2';
+    const grid4 = () => { const d = document.createElement('div'); d.className = 'grid grid-cols-2 sm:grid-cols-4 gap-2'; return d; };
+    const num = (label: string, key: string, help = '') => fieldInput(label, '', p[key], (v: string) => p[key] = v === '' ? undefined : Number(v), 'number', help);
+    const txt = (label: string, key: string, ph = '', help = '') => fieldInput(label, ph, p[key], (v: string) => { if (v === '') delete p[key]; else p[key] = v; }, 'text', help);
+
+    const r1 = grid4();
+    r1.appendChild(num('Instancias', 'count'));
+    r1.appendChild(txt('Nombre base *', 'base_name', 'web'));
+    r1.appendChild(num('vCPU', 'cpu'));
+    r1.appendChild(num('RAM (MB)', 'ram_mb'));
+    root.appendChild(r1);
+
+    const r2 = grid4();
+    r2.appendChild(num('Disco (GB)', 'disk_gb'));
+    r2.appendChild(txt('Usuario', 'admin_user'));
+    const pwWrap = document.createElement('div');
+    pwWrap.innerHTML = '<label class="block text-[11px] font-medium text-slate-500 mb-0.5">Contraseña</label>';
+    const pw = document.createElement('input'); pw.type = 'password'; pw.placeholder = '(aleatoria si vacío)'; pw.className = INPUT; pw.value = p.admin_password || '';
+    pw.addEventListener('input', () => { if (pw.value === '') delete p.admin_password; else p.admin_password = pw.value; });
+    pwWrap.appendChild(pw); r2.appendChild(pwWrap);
+    root.appendChild(r2);
+
+    // ── Nodo / Plantilla / Pool / Redes con conmutador Fijo/Variable ──
+    const isVar = (k: string) => { const v = p[k]; return typeof v === 'string' && /^\{\{.*\}\}$/.test(v.trim()); };
+    const stripVar = (v: any) => String(v || '').replace(/^\{\{\s*|\s*\}\}$/g, '');
+    function varSelect(key: string): HTMLElement {
+      const keys = varKeys();
+      if (!keys.length) { const d = document.createElement('div'); d.className = 'text-[11px] text-slate-600 py-1'; d.textContent = '(define variables arriba para enlazar)'; return d; }
+      const sel = document.createElement('select'); sel.className = SELECT;
+      sel.innerHTML = '<option value="">— elige variable —</option>' + keys.map(k => `<option value="${k}">{{${k}}}</option>`).join('');
+      sel.value = stripVar(p[key]);
+      sel.addEventListener('change', () => { if (sel.value) p[key] = `{{${sel.value}}}`; else delete p[key]; });
+      return sel;
+    }
+    function modeHeader(labelText: string, key: string, onToggle: (v: boolean) => void) {
+      const head = document.createElement('div'); head.className = 'flex items-center justify-between mb-0.5';
+      head.innerHTML = `<label class="block text-[11px] font-medium text-slate-500">${labelText}</label>`;
+      const tog = document.createElement('label'); tog.className = 'flex items-center gap-1 text-[10px] text-slate-400 cursor-pointer select-none';
+      const cbx = document.createElement('input'); cbx.type = 'checkbox'; cbx.checked = isVar(key);
+      tog.appendChild(cbx); tog.appendChild(document.createTextNode('variable')); head.appendChild(tog);
+      cbx.addEventListener('change', () => onToggle(cbx.checked));
+      return { head, cbx };
+    }
+
+    const nodeWrap = document.createElement('div'); const nodeSlot = document.createElement('div');
+    const nodeHdr = modeHeader('Nodo *', 'node', (v) => { if (!v) delete p.node; renderNode(); renderTpl(); renderNet(); });
+    nodeWrap.appendChild(nodeHdr.head); nodeWrap.appendChild(nodeSlot);
+    function renderNode() {
+      nodeSlot.innerHTML = '';
+      if (nodeHdr.cbx.checked) { nodeSlot.appendChild(varSelect('node')); return; }
+      const sel = document.createElement('select'); sel.className = SELECT; sel.innerHTML = '<option value="">Cargando…</option>';
+      sel.addEventListener('change', () => { p.node = sel.value || undefined; delete p.template_id; renderTpl(); renderNet(); });
+      nodeSlot.appendChild(sel);
+      getNodes().then((ns: string[]) => { sel.innerHTML = '<option value="">Selecciona…</option>' + ns.map(n => `<option value="${n}">${n}</option>`).join(''); if (p.node && !isVar('node') && ns.includes(p.node)) sel.value = p.node; });
+    }
+
+    const tplWrap = document.createElement('div'); const tplSlot = document.createElement('div');
+    const tplHdr = modeHeader('Plantilla *', 'template_id', (v) => { if (!v) delete p.template_id; renderTpl(); });
+    tplWrap.appendChild(tplHdr.head); tplWrap.appendChild(tplSlot);
+    function renderTpl() {
+      tplSlot.innerHTML = '';
+      if (tplHdr.cbx.checked) { tplSlot.appendChild(varSelect('template_id')); return; }
+      const cn = (!nodeHdr.cbx.checked && p.node) ? p.node : null;
+      if (!cn) { const d = document.createElement('div'); d.className = 'text-[11px] text-slate-600 py-1'; d.textContent = 'Elige un nodo fijo o marca «variable».'; tplSlot.appendChild(d); return; }
+      const sel = document.createElement('select'); sel.className = SELECT; sel.innerHTML = '<option value="">Cargando…</option>';
+      sel.addEventListener('change', () => { p.template_id = sel.value ? Number(sel.value) : undefined; });
+      tplSlot.appendChild(sel);
+      apiFetch(`/nodes/${cn}/templates`).then(r => r.json()).then((t: any) => { sel.innerHTML = '<option value="">Selecciona…</option>' + Object.entries(t).map(([l, id]) => `<option value="${id}">${l}</option>`).join(''); if (p.template_id && !isVar('template_id')) sel.value = String(p.template_id); }).catch(() => { sel.innerHTML = '<option value="">Error</option>'; });
+    }
+
+    const poolWrap = document.createElement('div'); const poolSlot = document.createElement('div');
+    const poolHdr = modeHeader('Pool (opcional)', 'pool', (v) => { if (!v) delete p.pool; renderPool(); });
+    poolWrap.appendChild(poolHdr.head); poolWrap.appendChild(poolSlot);
+    function renderPool() {
+      poolSlot.innerHTML = '';
+      if (poolHdr.cbx.checked) { poolSlot.appendChild(varSelect('pool')); return; }
+      const inp = document.createElement('input'); inp.type = 'text'; inp.className = INPUT; inp.placeholder = 'idp-acme'; inp.value = (!isVar('pool') && p.pool) ? p.pool : '';
+      inp.addEventListener('input', () => { if (inp.value.trim() === '') delete p.pool; else p.pool = inp.value.trim(); });
+      poolSlot.appendChild(inp);
+    }
+
+    const r3 = document.createElement('div'); r3.className = 'grid grid-cols-1 sm:grid-cols-3 gap-2';
+    r3.appendChild(nodeWrap); r3.appendChild(tplWrap); r3.appendChild(poolWrap); root.appendChild(r3);
+
+    // Redes: chips concretos (si nodo fijo) + tokens variable
+    const netWrap = document.createElement('div'); netWrap.innerHTML = '<label class="block text-[11px] font-medium text-slate-500 mb-1">Redes (multi-NIC) *</label>';
+    const netBox = document.createElement('div'); netBox.className = 'flex flex-wrap gap-1.5 items-center'; netWrap.appendChild(netBox);
+    root.appendChild(netWrap);
+    function renderNet() {
+      netBox.innerHTML = '';
+      (p.bridges || []).filter((b: string) => /^\{\{.*\}\}$/.test(String(b))).forEach((tok: string) => {
+        const chip = document.createElement('button'); chip.type = 'button'; chip.className = pill(true); chip.textContent = tok + ' ✕';
+        chip.addEventListener('click', () => { p.bridges = p.bridges.filter((x: string) => x !== tok); renderNet(); });
+        netBox.appendChild(chip);
+      });
+      const cn = (!nodeHdr.cbx.checked && p.node) ? p.node : null;
+      if (cn) {
+        apiFetch(`/nodes/${cn}/networks`).then(r => r.json()).then((nets: any) => {
+          [...(nets.bridges || []), ...(nets.vnets || [])].forEach((n: string) => {
+            const on = () => p.bridges.includes(n);
+            const b = document.createElement('button'); b.type = 'button'; b.textContent = n; b.className = pill(on());
+            b.addEventListener('click', () => { if (on()) p.bridges = p.bridges.filter((x: string) => x !== n); else p.bridges.push(n); b.className = pill(on()); });
+            netBox.appendChild(b);
+          });
+        }).catch(() => {});
+      } else if (!(p.bridges || []).some((b: string) => /^\{\{.*\}\}$/.test(String(b)))) {
+        const d = document.createElement('span'); d.className = 'text-[11px] text-slate-600'; d.textContent = 'Elige un nodo fijo o añade una variable →'; netBox.appendChild(d);
+      }
+      if (varKeys().length) {
+        const add = document.createElement('select'); add.className = 'bg-slate-900 border border-slate-800 rounded px-1 py-0.5 text-[10px] text-slate-400';
+        add.innerHTML = '<option value="">➕ variable</option>' + varKeys().map(k => `<option value="${k}">{{${k}}}</option>`).join('');
+        add.addEventListener('change', () => { if (add.value) { const tok = `{{${add.value}}}`; if (!p.bridges.includes(tok)) p.bridges.push(tok); renderNet(); } });
+        netBox.appendChild(add);
+      }
+    }
+    renderNode(); renderTpl(); renderPool(); renderNet();
+
+    // Modo IP (condicional)
+    const ipWrap = document.createElement('div'); ipWrap.className = 'bg-slate-900/40 border border-slate-800 rounded-lg p-2';
+    const modes = document.createElement('div'); modes.className = 'flex gap-4 mb-2 text-[11px] text-slate-300';
+    const staticBox = document.createElement('div'); staticBox.className = 'grid grid-cols-2 gap-2'; staticBox.style.display = p.ip_mode === 'static' ? 'grid' : 'none';
+    [['dhcp', 'DHCP'], ['static', 'IP estática']].forEach(([m, lbl]) => {
+      const lab = document.createElement('label'); lab.className = 'flex items-center gap-1.5 cursor-pointer';
+      const rb = document.createElement('input'); rb.type = 'radio'; rb.name = `ipmode-${step.id}`; rb.value = m; rb.checked = p.ip_mode === m; rb.className = 'text-blue-500';
+      rb.addEventListener('change', () => { p.ip_mode = m; staticBox.style.display = m === 'static' ? 'grid' : 'none'; });
+      lab.appendChild(rb); lab.appendChild(document.createTextNode(lbl)); modes.appendChild(lab);
+    });
+    ipWrap.appendChild(modes);
+    staticBox.appendChild(txt('IP inicial (CIDR)', 'ip_start', '10.0.0.10/24', 'Primera IP CON máscara (ej. 10.0.0.10/24). Para varias VMs se autoincrementa.'));
+    staticBox.appendChild(txt('Gateway', 'gateway', '10.0.0.1', 'IP del router de la red (ej. 10.0.0.1).'));
+    ipWrap.appendChild(staticBox); root.appendChild(ipWrap);
+
+    // DNS / SSH
+    const r4 = document.createElement('div'); r4.className = 'grid grid-cols-1 sm:grid-cols-2 gap-2';
+    r4.appendChild(txt('DNS (coma)', 'dns', '1.1.1.1, 8.8.8.8', 'Servidores DNS separados por coma.'));
+    r4.appendChild(txt('Dominio DNS', 'dns_domain', '', 'Dominio de búsqueda DNS (ej. midominio.local). Opcional.'));
+    root.appendChild(r4);
+    const sshWrap = document.createElement('div'); sshWrap.innerHTML = '<label class="block text-[11px] font-medium text-slate-500 mb-0.5">Claves SSH</label>';
+    const ssh = document.createElement('textarea'); ssh.rows = 2; ssh.className = INPUT + ' font-mono text-xs'; ssh.value = p.ssh_keys || ''; ssh.placeholder = 'ssh-ed25519 ...';
+    ssh.addEventListener('input', () => { if (ssh.value.trim() === '') delete p.ssh_keys; else p.ssh_keys = ssh.value; });
+    sshWrap.appendChild(ssh); root.appendChild(sshWrap);
+
+    // TTL (botones)
+    const ttlWrap = document.createElement('div'); ttlWrap.innerHTML = '<label class="block text-[11px] font-medium text-slate-500 mb-1">Ciclo de vida (TTL)</label>';
+    const ttlBox = document.createElement('div'); ttlBox.className = 'flex flex-wrap gap-1.5 items-center';
+    const cdays = document.createElement('input'); cdays.type = 'number'; cdays.min = '1'; cdays.placeholder = 'días'; cdays.className = INPUT + ' w-20 hidden';
+    const paintTtl = () => ttlBox.querySelectorAll('[data-ttl]').forEach((b: any) => b.className = pill(b.getAttribute('data-ttl') === String(p.ttl_hours)));
+    [['24h', 24], ['7 días', 168], ['30 días', 720], ['Nunca', 0]].forEach(([lbl, h]) => {
+      const b = document.createElement('button'); b.type = 'button'; b.dataset.ttl = String(h); b.textContent = String(lbl);
+      b.addEventListener('click', () => { p.ttl_hours = h; cdays.classList.add('hidden'); paintTtl(); }); ttlBox.appendChild(b);
+    });
+    const cb = document.createElement('button'); cb.type = 'button'; cb.textContent = 'Personalizado'; cb.className = pill(false);
+    cb.addEventListener('click', () => cdays.classList.toggle('hidden'));
+    cdays.addEventListener('input', () => { const d = parseInt(cdays.value) || 1; p.ttl_hours = d * 24; paintTtl(); });
+    ttlBox.appendChild(cb); ttlBox.appendChild(cdays);
+    ttlWrap.appendChild(ttlBox); root.appendChild(ttlWrap); paintTtl();
+
+    // Apps (botones)
+    const appsWrap = document.createElement('div'); appsWrap.innerHTML = '<label class="block text-[11px] font-medium text-slate-500 mb-1">Apps a instalar</label>';
+    appsWrap.appendChild(appToggleBox(p.app_ids));
+    root.appendChild(appsWrap);
+
+    return root;
+  }
+
+  // — guardar —
+  function serialize() {
+    // Convierte params multi (coma) a lista antes de enviar.
+    const steps = state.steps.map((s: any) => {
+      const schema = ACTIONS[s.action] || { params: [] };
+      const params: Record<string, any> = {};
+      (schema.params || []).forEach((p: any) => {
+        let val = s.params[p.key];
+        if (val === undefined || val === '' ) return;
+        if (MULTI_TYPES.includes(p.type) && typeof val === 'string') val = val.split(',').map((x: string) => x.trim()).filter(Boolean);
+        params[p.key] = val;
+      });
+      return { id: s.id, action: s.action, name: s.name, params };
+    });
+    return { name: state.name, description: state.description, on_failure: state.on_failure, variables: state.variables, steps };
+  }
+
+  document.getElementById('builderSave')!.addEventListener('click', async () => {
+    builderError.classList.add('hidden');
+    // Validación cliente del constructor (el backend revalida en pre-flight/run).
+    const berrs: string[] = [];
+    state.steps.forEach((s: any, i: number) => {
+      if (s.action === 'deploy_vms' && s.params.ip_mode === 'static') {
+        const ip = String(s.params.ip_start || '').trim();
+        if (!ip) berrs.push(`Fase #${i + 1}: falta la IP inicial (estática).`);
+        else if (!/\{\{/.test(ip) && !looksLikeStaticCidr(ip)) berrs.push(`Fase #${i + 1}: la IP inicial debe ser CIDR con máscara real (ej. 10.0.0.10/24).`);
+      }
+    });
+    if (berrs.length) { builderShowErr(builderError, berrs.join(' ')); return; }
+    const payload = serialize();
+    const url = state.id ? `/admin/blueprints/${state.id}` : '/admin/blueprints';
+    const method = state.id ? 'PUT' : 'POST';
+    try {
+      const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!res.ok) { builderShowErr(builderError, typeof data.detail === 'string' ? data.detail : 'Error al guardar'); return; }
+      builder.close(); loadBlueprints();
+    } catch (e) { builderShowErr(builderError, 'Fallo de conexión'); }
+  });
+
+  document.getElementById('builderCancel')!.addEventListener('click', () => builder.close());
+  document.getElementById('builderClose')!.addEventListener('click', () => builder.close());
+  document.getElementById('bpNewBtn')!.addEventListener('click', openNew);
+
+  async function removeBlueprint(id: string, name: string) {
+    if (!confirm(`¿Eliminar el blueprint "${name}"?`)) return;
+    try { await apiFetch(`/admin/blueprints/${id}`, { method: 'DELETE' }); loadBlueprints(); } catch (e) { alert('No se pudo eliminar'); }
+  }
+
+  // ── Panel de Ejecuciones (en vivo, reload-safe) ────────────────────────────────
+  function escapeHtml(s: any): string {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c]);
+  }
+  async function loadRuns() {
+    try {
+      const res = await apiFetch('/admin/blueprints/runs'); if (!res.ok) return;
+      const runs = await res.json();
+      if (!runs.length) { runsBox.innerHTML = '<div class="text-slate-500 text-xs py-2">Sin ejecuciones aún.</div>'; return; }
+      runsBox.innerHTML = runs.map((r: any) => {
+        const when = new Date(r.created_at * 1000).toLocaleString();
+        const steps = r.steps || [];
+        const done = steps.filter((s: any) => s.status === 'completed').length;
+        const active = !TERMINAL.includes(r.status);
+        const open = active || expandedRuns.has(r.run_id);
+        const stepsHtml = steps.length
+          ? steps.map((s: any) => `<div class="flex items-start gap-2 text-xs"><span class="mt-0.5">${stepIcon(s.status)}</span><div class="flex-1 min-w-0"><div class="text-slate-300 truncate">${escapeHtml(s.name || s.action)}</div>${s.error ? `<div class="text-[11px] text-red-400 mt-0.5 break-words">${escapeHtml(s.error)}</div>` : ''}</div></div>`).join('')
+          : '<div class="text-[11px] text-slate-600">Preparando…</div>';
+        return `<div class="border border-slate-800 rounded-lg overflow-hidden">
+          <button type="button" data-run="${r.run_id}" class="run-head w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-800/40 transition-colors text-left">
+            <div class="min-w-0">
+              <div class="text-xs text-white truncate">${escapeHtml(r.name)}</div>
+              <div class="text-[10px] text-slate-500">${when} · ${done}/${steps.length} pasos</div>
+            </div>
+            <span class="shrink-0 ${statusBadgeClass(r.status)}">${r.status}${active ? ' <span class="animate-pulse">●</span>' : ''}</span>
+          </button>
+          <div class="${open ? '' : 'hidden'} px-3 pb-2.5 pt-1 border-t border-slate-800/70 space-y-1.5">${stepsHtml}</div>
+        </div>`;
+      }).join('');
+    } catch (e) {}
+  }
+  // Toggle del timeline por ejecución (delegación: el innerHTML se repinta en cada poll).
+  runsBox.addEventListener('click', (e) => {
+    const head = (e.target as HTMLElement).closest('.run-head') as HTMLElement | null;
+    if (!head) return;
+    const id = head.dataset.run!;
+    expandedRuns.has(id) ? expandedRuns.delete(id) : expandedRuns.add(id);
+    loadRuns();
+  });
+
+  loadBlueprints();
+  loadRuns();
+  // Refresco frecuente: las ejecuciones activas avanzan en vivo y, al recargar la página,
+  // se vuelven a cargar desde el servidor (estado persistido en SQLite).
+  setInterval(loadRuns, 2000);
+</script>
