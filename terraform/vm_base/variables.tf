@@ -94,6 +94,16 @@ variable "network_bridges" {
   default     = []
 }
 
+variable "network_nics" {
+  type = list(object({
+    bridge  = string
+    ip      = string # "dhcp" o una IP en formato CIDR (ej. 10.0.40.10/24)
+    gateway = string # puerta de enlace o "" (ninguna)
+  }))
+  description = "Interfaces de red con su config IP por NIC. Vacío = derivar de los campos legacy (vm_ip/network_bridge(s))."
+  default     = []
+}
+
 variable "admin_user" {
   type        = string
   description = "Usuario administrador por defecto"

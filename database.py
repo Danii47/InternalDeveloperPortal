@@ -83,6 +83,18 @@ def init_db() -> None:
                 updated_at     REAL NOT NULL
             )
         """)
+        # Resultado de la comprobación de conectividad a internet de cada VM, hecha
+        # justo después del despliegue (vía guest-agent). internet: NULL = desconocido
+        # (el agente no respondió a tiempo), 0 = sin acceso, 1 = con acceso. Se usa para
+        # mostrar en el historial (provisionamiento y ejecuciones de Blueprint) si las
+        # apps extra del catálogo pudieron instalarse.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS vm_connectivity (
+                vm_name    TEXT PRIMARY KEY,
+                internet   INTEGER,
+                checked_at REAL NOT NULL
+            )
+        """)
 
 
 def get_or_create_quota(pool_name: str) -> dict:
@@ -129,6 +141,12 @@ def list_all_quotas() -> list:
             "SELECT * FROM pool_quotas ORDER BY pool_name"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def delete_quota(pool_name: str) -> None:
+    """Elimina la fila de cuota local de un pool (al borrar el pool en Proxmox)."""
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM pool_quotas WHERE pool_name = ?", (pool_name,))
 
 
 # ── VM lifecycles (ephemeral environments / TTL) ────────────────────────────────
@@ -346,3 +364,31 @@ def list_blueprint_rows() -> list:
     with _get_conn() as conn:
         rows = conn.execute("SELECT * FROM blueprints ORDER BY name").fetchall()
         return [_row_to_blueprint(r) for r in rows]
+
+
+# ── Conectividad de VM (post-despliegue) ────────────────────────────────────────
+
+def set_vm_connectivity(vm_name: str, internet: bool | None) -> None:
+    """UPSERT del resultado de la comprobación de internet de una VM."""
+    val = None if internet is None else int(internet)
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO vm_connectivity (vm_name, internet, checked_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(vm_name) DO UPDATE SET
+                internet   = excluded.internet,
+                checked_at = excluded.checked_at
+        """, (vm_name, val, time.time()))
+
+
+def get_connectivity_map(vm_names: list) -> dict:
+    """{vm_name: True|False|None} para los nombres dados (ausentes = aún sin comprobar)."""
+    if not vm_names:
+        return {}
+    placeholders = ",".join("?" for _ in vm_names)
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT vm_name, internet FROM vm_connectivity WHERE vm_name IN ({placeholders})",
+            vm_names,
+        ).fetchall()
+    return {r["vm_name"]: (None if r["internet"] is None else bool(r["internet"])) for r in rows}

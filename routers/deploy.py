@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 import database
 from core.config import TTL_MAX_HOURS
 from core.deps import pve_client, tf_runner
-from services import app_installer, tool_catalog
+from services import app_installer, connectivity, tool_catalog, validation
 from core.security import (
     UserSession,
     assert_deploy_params_allowed,
@@ -49,6 +49,14 @@ def _check_snapname_param(snapname: str) -> None:
         )
 
 
+class Nic(BaseModel):
+    """Una interfaz de red con su configuración IP propia."""
+    bridge: str
+    ip_mode: str = "dhcp"            # "dhcp" | "static"
+    ip: Optional[str] = None         # IP inicial en CIDR cuando es estática
+    gateway: Optional[str] = None    # puerta de enlace (opcional)
+
+
 class DeployRequest(BaseModel):
     node_name: str
     template_id: int
@@ -60,8 +68,11 @@ class DeployRequest(BaseModel):
     disk_size_gb: int = Field(default=20, ge=1, le=10240)
     admin_user: str = "administrator"
     admin_password: str
-    network_bridge: str
-    ip_mode: str
+    # Interfaces de red con IP por-NIC. Si viene vacío, se usan los campos legacy de abajo.
+    nics: List[Nic] = []
+    # Legacy (despliegue single-NIC): se mantienen para compatibilidad.
+    network_bridge: Optional[str] = None
+    ip_mode: Optional[str] = None
     vm_ip_start: Optional[str] = None
     vm_gateway: Optional[str] = None
     vm_dns: List[str] = []
@@ -160,6 +171,57 @@ def _increment_ip(ip_cidr: str, step: int) -> str:
         return ip_cidr
 
 
+def _effective_nics(req: "DeployRequest") -> List[Nic]:
+    """Devuelve las NICs a desplegar: la lista `nics` si viene; si no, una sola desde los campos legacy."""
+    if req.nics:
+        return req.nics
+    is_dhcp = (req.ip_mode or "DHCP").upper() == "DHCP"
+    return [Nic(
+        bridge=req.network_bridge or "",
+        ip_mode="dhcp" if is_dhcp else "static",
+        ip=req.vm_ip_start,
+        gateway=req.vm_gateway,
+    )]
+
+
+def _validate_nics(sess: UserSession, node: str, template_id: int, nics: List[Nic]) -> None:
+    """Valida nodo/plantilla y, por NIC, que el bridge esté permitido y la IP estática sea correcta."""
+    if not nics:
+        raise HTTPException(status_code=400, detail="Se requiere al menos una interfaz de red.")
+    # Reutiliza el gate existente para nodo + plantilla + primer bridge.
+    assert_deploy_params_allowed(sess, node, template_id, nics[0].bridge)
+    allowed = sess.client.get_networks(node)
+    allowed_bridges = set(allowed.get("bridges", [])) | set(allowed.get("vnets", []))
+    for n in nics:
+        if not n.bridge:
+            raise HTTPException(status_code=400, detail="Cada interfaz de red necesita un bridge/VNet.")
+        if n.bridge not in allowed_bridges:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Acceso denegado: la red '{n.bridge}' no está disponible en '{node}'",
+            )
+        if (n.ip_mode or "dhcp").lower() == "static":
+            err = validation.validate_static_cidr(n.ip or "")
+            if err:
+                raise HTTPException(status_code=400, detail=f"Interfaz '{n.bridge}': {err}")
+            if n.gateway and validation.validate_ip(n.gateway):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Interfaz '{n.bridge}': puerta de enlace — {validation.validate_ip(n.gateway)}",
+                )
+
+
+def _nics_for_instance(nics: List[Nic], i: int) -> List[dict]:
+    """NICs de la instancia `i`: cada NIC estática incrementa su IP; las DHCP se quedan en 'dhcp'."""
+    out = []
+    for n in nics:
+        if (n.ip_mode or "dhcp").lower() == "static":
+            out.append({"bridge": n.bridge, "ip": _increment_ip(n.ip, i), "gateway": n.gateway or ""})
+        else:
+            out.append({"bridge": n.bridge, "ip": "dhcp", "gateway": ""})
+    return out
+
+
 def _read_template_id_from_state(vm_name: str) -> int:
     """Returns the template_id stored in the VM's Terraform state, or 0 if absent."""
     try:
@@ -247,11 +309,8 @@ def deploy_infrastructure(
     request: DeployRequest,
     sess: UserSession = Depends(get_current_session),
 ):
-    is_dhcp = request.ip_mode.upper() == "DHCP"
-    if not is_dhcp and (not request.vm_ip_start or not request.vm_gateway):
-        raise HTTPException(status_code=400, detail="Static IP requires IP address and gateway")
-
-    assert_deploy_params_allowed(sess, request.node_name, request.template_id, request.network_bridge)
+    nics = _effective_nics(request)
+    _validate_nics(sess, request.node_name, request.template_id, nics)
 
     pool_name = ProxmoxIDPClient._poolid_for(sess.userid)
     _check_quota(
@@ -273,19 +332,17 @@ def deploy_infrastructure(
                 if request.instance_count > 1
                 else request.base_vm_name
             )
-            current_ip = _increment_ip(request.vm_ip_start, i) if not is_dhcp else "dhcp"
-            current_gw = request.vm_gateway if not is_dhcp else ""
+            inst_nics = _nics_for_instance(nics, i)
 
             config = VMConfig(
                 vm_id=current_id,
                 node_name=request.node_name,
                 template_id=request.template_id,
                 vm_name=current_name,
-                network_bridge=request.network_bridge,
+                network_bridge=inst_nics[0]["bridge"],
+                network_nics=inst_nics,
                 admin_user=request.admin_user,
                 admin_password=request.admin_password,
-                vm_ip=current_ip,
-                vm_gateway=current_gw,
                 vm_dns=request.vm_dns,
                 vm_dns_domain=request.vm_dns_domain,
                 vm_ram=request.vm_ram_mb,
@@ -295,6 +352,17 @@ def deploy_infrastructure(
                 ssh_keys=request.ssh_keys,
             )
             tf_runner.deploy(config)
+
+            # Comprobación de conectividad a internet: tarea de fondo SIN lock,
+            # igual que la instalación de apps. Su resultado se persiste y se
+            # muestra en el Live Task Stream (historial de despliegue).
+            run_unlocked_task(
+                task_type="Comprobación de red",
+                target_name=current_name,
+                func=lambda node=request.node_name, vmid=current_id, name=current_name:
+                    connectivity.check_vm_internet(node, vmid, name),
+                owner=userid,
+            )
 
             # Register the ephemeral lifecycle only AFTER the VM is actually
             # created, and per-instance, so a mid-batch failure never leaves

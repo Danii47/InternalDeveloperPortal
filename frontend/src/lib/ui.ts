@@ -25,6 +25,50 @@ export function toast(msg: string, kind: ToastKind = 'info'): void {
   setTimeout(() => { t.classList.add('opacity-0'); setTimeout(() => t.remove(), 300); }, 5000);
 }
 
+/**
+ * Modal de confirmación con la estética de la app. Crea un <dialog> al vuelo y devuelve
+ * una promesa que resuelve true (confirmar) o false (cancelar / cerrar con Esc).
+ */
+export function confirmDialog(
+  title: string,
+  message: string,
+  opts: { okLabel?: string; cancelLabel?: string; danger?: boolean } = {},
+): Promise<boolean> {
+  const { okLabel = 'Eliminar', cancelLabel = 'Cancelar', danger = true } = opts;
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'm-auto bg-slate-900 border border-slate-800 rounded-xl p-0 w-full max-w-md text-slate-300 shadow-2xl backdrop:bg-black/60';
+    const body = document.createElement('div');
+    body.className = 'p-5';
+    body.innerHTML =
+      `<h3 class="text-lg font-semibold text-white mb-1.5"></h3>` +
+      `<p class="text-sm text-slate-400"></p>` +
+      `<div class="flex gap-2 justify-end mt-5">` +
+      `<button data-act="cancel" class="ui-btn ui-btn-ghost"></button>` +
+      `<button data-act="ok" class="ui-btn ${danger ? 'ui-btn-danger' : 'ui-btn-primary'}"></button>` +
+      `</div>`;
+    (body.querySelector('h3') as HTMLElement).textContent = title;
+    (body.querySelector('p') as HTMLElement).textContent = message;
+    (body.querySelector('[data-act=cancel]') as HTMLElement).textContent = cancelLabel;
+    (body.querySelector('[data-act=ok]') as HTMLElement).textContent = okLabel;
+    dlg.appendChild(body);
+    document.body.appendChild(dlg);
+
+    let settled = false;
+    const done = (val: boolean) => {
+      if (settled) return;
+      settled = true;
+      try { dlg.close(); } catch (_) {}
+      dlg.remove();
+      resolve(val);
+    };
+    body.querySelector('[data-act=ok]')!.addEventListener('click', () => done(true));
+    body.querySelector('[data-act=cancel]')!.addEventListener('click', () => done(false));
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(false); });
+    dlg.showModal();
+  });
+}
+
 // Estados de run/tarea/ciclo de vida → clase .ui-badge-*
 const BADGE_MAP: Record<string, string> = {
   running: 'ui-badge-running', pending: 'ui-badge-idle',
@@ -37,6 +81,50 @@ export function statusBadgeClass(status: string): string {
 }
 export function statusBadge(status: string, label?: string): string {
   return `<span class="${statusBadgeClass(status)}">${label ?? status}</span>`;
+}
+
+/**
+ * Envuelve un <input type=number> con botones − / + a juego (oculta las flechas nativas).
+ * Mantiene el MISMO nodo input (sus listeners siguen vivos) y dispara 'input'/'change' al pulsar.
+ */
+export function numberStepper(input: HTMLInputElement | null): void {
+  if (!input || input.dataset.stepped) return;
+  input.dataset.stepped = '1';
+  const parent = input.parentElement;
+  const anchor = input.nextSibling;
+  const wrap = document.createElement('div');
+  wrap.className = 'ui-stepper';
+  const mk = (txt: string, fn: () => void) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.tabIndex = -1; b.className = 'ui-stepper-btn'; b.textContent = txt;
+    b.addEventListener('click', () => {
+      if (input.disabled) return;
+      fn();
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    return b;
+  };
+  wrap.appendChild(mk('−', () => input.stepDown()));
+  wrap.appendChild(input);
+  wrap.appendChild(mk('+', () => input.stepUp()));
+  if (parent) parent.insertBefore(wrap, anchor);
+}
+
+// — Validadores cliente ligeros (el backend es la autoridad) —
+export function looksLikeIp(v: string): boolean {
+  const s = (v || '').trim();
+  return /^(\d{1,3})(\.\d{1,3}){3}$/.test(s) && s.split('.').every((o) => +o <= 255);
+}
+export function looksLikeStaticCidr(v: string): boolean {
+  const m = (v || '').trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/);
+  if (!m) return false;
+  return m[1].split('.').every((o) => +o <= 255) && +m[2] >= 1 && +m[2] <= 31; // máscara real (no /32)
+}
+export function looksLikeCidr(v: string): boolean {
+  const m = (v || '').trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/);
+  if (!m) return false;
+  return m[1].split('.').every((o) => +o <= 255) && +m[2] <= 32;
 }
 
 /** Icono "?" con tooltip accesible (hover/foco). El texto se inserta sin riesgo de inyección. */

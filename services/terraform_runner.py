@@ -33,7 +33,10 @@ class VMConfig:
     network_bridge: str
     admin_user: str
     admin_password: str
-    network_bridges: List[str] = field(default_factory=list)  # multi-NIC; vacío = [network_bridge]
+    network_bridges: List[str] = field(default_factory=list)  # multi-NIC (legacy); vacío = [network_bridge]
+    # Interfaces con IP por-NIC. Cada dict: {"bridge","ip" ("dhcp"|CIDR),"gateway" (""|IP)}.
+    # Vacío → Terraform deriva las NICs de los campos legacy (network_bridge(s)+vm_ip/vm_gateway).
+    network_nics: List[dict] = field(default_factory=list)
     vm_ip: str = "dhcp"
     vm_gateway: str = ""
     vm_dns: List[str] = field(default_factory=list)
@@ -86,6 +89,8 @@ class TerraformRunner:
             "TF_VAR_ssh_keys": c.ssh_keys,
             "TF_VAR_vm_dns": json.dumps(c.vm_dns),
             "TF_VAR_network_bridges": json.dumps(c.network_bridges),
+            # Interfaces con IP por-NIC (vacío → Terraform usa el camino legacy).
+            "TF_VAR_network_nics": json.dumps(c.network_nics),
         }
         args = [
             f"-var=vm_id={c.vm_id}",
@@ -128,6 +133,20 @@ class TerraformRunner:
         ip_config = init_block.get("ip_config", [{}])[0].get("ipv4", [{}])[0] if init_block.get("ip_config") else {}
         dns_config = init_block.get("dns", [{}])[0] if init_block.get("dns") else {}
         user_account = init_block.get("user_account", [{}])[0] if init_block.get("user_account") else {}
+
+        # Reconstruye las NICs por-interfaz casando network_device[i] con ip_config[i] (mismo orden).
+        # Estado antiguo (1 ip_config, N NICs): NIC0 conserva su IP; el resto queda en 'dhcp'.
+        nds = attrs.get("network_device", []) or []
+        ipcs = init_block.get("ip_config", []) or []
+        network_nics = []
+        for i, nd in enumerate(nds):
+            ipv4 = ipcs[i].get("ipv4", [{}])[0] if (i < len(ipcs) and ipcs[i].get("ipv4")) else {}
+            network_nics.append({
+                "bridge": nd.get("bridge", ""),
+                "ip": ipv4.get("address", "dhcp"),
+                "gateway": ipv4.get("gateway", "") or "",
+            })
+
         return VMConfig(
             vm_id=attrs.get("vm_id"),
             node_name=attrs.get("node_name"),
@@ -135,6 +154,7 @@ class TerraformRunner:
             vm_name=vm_name,
             network_bridge=attrs.get("network_device", [{}])[0].get("bridge", "vmbr0") if attrs.get("network_device") else "vmbr0",
             network_bridges=[d.get("bridge") for d in attrs.get("network_device", []) if d.get("bridge")],
+            network_nics=network_nics,
             admin_user=user_account.get("username", "administrator"),
             admin_password=user_account.get("password", ""),
             vm_ip=ip_config.get("address", "dhcp"),

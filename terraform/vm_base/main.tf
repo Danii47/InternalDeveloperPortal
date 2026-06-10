@@ -1,7 +1,11 @@
 locals {
-  # Multi-NIC: usa la lista network_bridges si viene; si no, cae al network_bridge único
-  # (compatibilidad con el despliegue normal). Cada elemento = una interfaz de red.
-  bridges = length(var.network_bridges) > 0 ? var.network_bridges : [var.network_bridge]
+  # NICs: cada elemento = una interfaz de red con su config IP propia. Se usa network_nics si
+  # viene; si no, se deriva de las variables legacy (network_bridges/network_bridge + vm_ip/vm_gateway)
+  # para mantener intacto el despliegue normal y adopt/destroy.
+  nics = length(var.network_nics) > 0 ? var.network_nics : [
+    for b in (length(var.network_bridges) > 0 ? var.network_bridges : [var.network_bridge]) :
+    { bridge = b, ip = var.vm_ip, gateway = var.vm_gateway }
+  ]
 }
 
 resource "proxmox_virtual_environment_vm" "server" {
@@ -41,9 +45,9 @@ resource "proxmox_virtual_environment_vm" "server" {
   }
 
   dynamic "network_device" {
-    for_each = local.bridges
+    for_each = local.nics
     content {
-      bridge = network_device.value
+      bridge = network_device.value.bridge
     }
   }
 
@@ -54,13 +58,17 @@ resource "proxmox_virtual_environment_vm" "server" {
     # Vacío → null → cloud-init de identidad intacto (comportamiento base sin app).
     vendor_data_file_id = var.app_snippet_id != "" ? var.app_snippet_id : null
 
-    ip_config {
-      ipv4 {
-        address = var.vm_ip
-        gateway = var.vm_ip == "dhcp" ? null : var.vm_gateway
+    # Un ip_config por NIC, en el MISMO orden que network_device (Proxmox ipconfig0..N).
+    dynamic "ip_config" {
+      for_each = local.nics
+      content {
+        ipv4 {
+          address = ip_config.value.ip
+          gateway = (ip_config.value.ip == "dhcp" || ip_config.value.gateway == "") ? null : ip_config.value.gateway
+        }
       }
     }
-    
+
     dns {
       # Se aplican los DNS indicados en cualquier modo (también DHCP); vacío → null.
       domain  = var.vm_dns_domain != "" ? var.vm_dns_domain : null

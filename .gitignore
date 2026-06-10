@@ -29,3 +29,5 @@ data/
 backend.log
 *.log
 nohup.out
+
+.claude

@@ -39,12 +39,14 @@ const isAdmin = user?.realm === 'pam';
 							<a href="/resources" class={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${pathname === '/resources' ? 'bg-slate-800 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
 								📦 Inventario Flota
 							</a>
-							<a href="/quotas" class={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${pathname === '/quotas' ? 'bg-slate-800 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
-								📊 Cuotas
-							</a>
 							{isAdmin && (
 								<a href="/admin/blueprints" class={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${pathname === '/admin/blueprints' ? 'bg-slate-800 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
 									🧩 Blueprints
+								</a>
+							)}
+							{isAdmin && (
+								<a href="/admin/tenancy" class={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${pathname === '/admin/tenancy' ? 'bg-slate-800 text-blue-400' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
+									🏷️ Pools y Grupos
 								</a>
 							)}
 						</div>

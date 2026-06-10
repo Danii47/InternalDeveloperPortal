@@ -131,6 +131,24 @@ class ProxmoxIDPClient:
         if g or u:
             self.proxmox.access.acl.put(**kwargs)
 
+    def remove_acl(self, path: str, role: str, groups=None, users=None) -> None:
+        """
+        Revoca `role` en `path` para grupos/usuarios (PUT /access/acl con delete=1). Gemelo de
+        `grant_acl`; se usa para limpiar ACL colgantes al borrar un pool o grupo.
+        """
+        def _csv(v):
+            if not v:
+                return None
+            return v if isinstance(v, str) else ",".join(v)
+        kwargs = {"path": path, "roles": role, "propagate": 0, "delete": 1}
+        g, u = _csv(groups), _csv(users)
+        if g:
+            kwargs["groups"] = g
+        if u:
+            kwargs["users"] = u
+        if g or u:
+            self.proxmox.access.acl.put(**kwargs)
+
     def create_pool(self, poolid: str, comment: str = "", users=None, groups=None,
                     roles: str = "PVEVMAdmin") -> str:
         """
@@ -166,6 +184,49 @@ class ProxmoxIDPClient:
     def delete_group(self, groupid: str) -> None:
         """Elimina un grupo. Compensador de create_group."""
         self.proxmox.access.groups(groupid).delete()
+
+    def get_groups(self) -> list:
+        """Grupos del clúster: [{groupid, comment, users}]. Read-only. [] ante error."""
+        try:
+            return self.proxmox.access.groups.get() or []
+        except Exception:
+            return []
+
+    def get_acls(self) -> list:
+        """ACLs del clúster: [{path, roleid, type, ugid, propagate}]. Read-only. [] ante error."""
+        try:
+            return self.proxmox.access.acl.get() or []
+        except Exception:
+            return []
+
+    def get_users(self) -> list:
+        """Usuarios del clúster: [{userid, enable, groups, ...}]. Read-only. [] ante error."""
+        try:
+            return self.proxmox.access.users.get() or []
+        except Exception:
+            return []
+
+    def _user_groups(self, userid: str) -> list:
+        """Grupos actuales de un usuario (la membresía se modela en el usuario en Proxmox)."""
+        try:
+            g = self.proxmox.access.users(userid).get().get("groups")
+            if isinstance(g, str):
+                return [x for x in g.split(",") if x]
+            return list(g or [])
+        except Exception:
+            return []
+
+    def add_user_to_group(self, userid: str, groupid: str) -> None:
+        """Añade `userid` a `groupid` (PUT /access/users/{id} con la lista de grupos actualizada)."""
+        groups = self._user_groups(userid)
+        if groupid not in groups:
+            groups.append(groupid)
+        self.proxmox.access.users(userid).put(groups=",".join(groups))
+
+    def remove_user_from_group(self, userid: str, groupid: str) -> None:
+        """Quita `userid` de `groupid`."""
+        groups = [g for g in self._user_groups(userid) if g != groupid]
+        self.proxmox.access.users(userid).put(groups=",".join(groups))
 
     def get_permissions(self) -> dict:
         """
@@ -534,6 +595,13 @@ class ProxmoxIDPClient:
         except Exception:
             return {"cpu": 0, "ram_mb": 0, "disk_gb": 0.0}
 
+    def get_pool_members(self, pool_name: str) -> list:
+        """Miembros de un pool (`GET /pools/{id}`.members) o [] si no existe / error."""
+        try:
+            return self.proxmox.pools(pool_name).get().get("members", []) or []
+        except Exception:
+            return []
+
     def get_all_pools(self) -> list:
         """Returns all pool IDs visible to this client (admin token)."""
         try:
@@ -640,6 +708,26 @@ class ProxmoxIDPClient:
                 )
             time.sleep(3)
         raise TimeoutError(f"Comando guest-agent excedió {timeout}s en VM {vmid}")
+
+    # Comando de prueba de salida a internet: prueba HTTPS con curl/wget y, si no
+    # están disponibles, ICMP con ping. Éxito (exit 0) en cualquiera de las tres = hay internet.
+    _INTERNET_CHECK_CMD = (
+        "(command -v curl >/dev/null 2>&1 && curl -fsS -m5 -o /dev/null https://1.1.1.1) || "
+        "(command -v wget >/dev/null 2>&1 && wget -q -T5 -O /dev/null https://1.1.1.1) || "
+        "(command -v ping >/dev/null 2>&1 && ping -c1 -W3 1.1.1.1 >/dev/null 2>&1)"
+    )
+
+    def agent_check_internet(self, node: str, vmid: int, timeout: int = 30) -> bool:
+        """
+        Comprueba si la VM tiene salida a internet ejecutando una petición de prueba
+        (curl/wget/ping a 1.1.1.1) dentro de la VM vía guest-agent. Devuelve False si
+        el comando falla, excede `timeout` o ninguna herramienta está disponible.
+        """
+        try:
+            code, _, _ = self.agent_run(node, vmid, self._INTERNET_CHECK_CMD, timeout=timeout)
+            return code == 0
+        except Exception:
+            return False
 
     def get_vm_metrics(self) -> dict:
         """

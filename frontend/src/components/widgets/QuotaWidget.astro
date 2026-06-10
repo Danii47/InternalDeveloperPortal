@@ -1,6 +1,7 @@
 ---
 // Data fetched entirely client-side so the widget stays live without SSR re-renders.
 // Exposes window.__quotaData for the deploy-form's client-side validation.
+import HelpTip from '../ui/HelpTip.astro';
 ---
 
 <div id="quotaWidget" class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6 shadow-xl">
@@ -11,6 +12,7 @@
           d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
       </svg>
       Cuota del Pool
+      <HelpTip text="Límite de recursos (CPU, RAM y disco) que puede consumir tu pool sumando todas tus VMs. La barra muestra cuánto llevas usado frente a tu tope; al llegar al límite no podrás desplegar más." />
     </h3>
     <span id="quotaPoolName"
       class="text-xs font-mono bg-slate-800 text-blue-400 px-2 py-0.5 rounded border border-slate-700">

@@ -9,6 +9,7 @@ import SnapshotModal from '../components/modals/SnapshotModal.astro';
 import AdoptModal from '../components/modals/AdoptModal.astro';
 import WebConsoleModal from '../components/modals/WebConsoleModal.astro';
 import TaskManager from '../components/widgets/TaskManager.astro';
+import QuotaWidget from '../components/widgets/QuotaWidget.astro';
 // SSR fetch uses the Docker-internal URL so traffic stays on the private network.
 // BACKEND_URL is injected at runtime via the frontend container's environment.
 const _ssrBackend: string = process.env.BACKEND_URL ?? "http://localhost:8000";
@@ -45,6 +46,9 @@ try {
       </button>
     </div>
   </div>
+
+  <!-- Cuota de tu pool (antes en la página de Cuotas) -->
+  <QuotaWidget />
 
   <div class="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl overflow-hidden">
     <div class="overflow-x-auto">

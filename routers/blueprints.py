@@ -70,9 +70,27 @@ def get_sdn_zones(sess: UserSession = Depends(require_admin)):
     return pve_client.get_sdn_zones()
 
 
+def _enrich_connectivity(run: dict) -> dict:
+    """Añade `internet` (True/False/None) a cada VM de los pasos `deploy_vms`."""
+    vm_names = [
+        vm["vm_name"]
+        for step in run.get("steps", [])
+        if step.get("action") == "deploy_vms" and step.get("ref")
+        for vm in step["ref"].get("vms", [])
+    ]
+    if not vm_names:
+        return run
+    conn_map = database.get_connectivity_map(vm_names)
+    for step in run["steps"]:
+        if step.get("action") == "deploy_vms" and step.get("ref"):
+            for vm in step["ref"].get("vms", []):
+                vm["internet"] = conn_map.get(vm["vm_name"])
+    return run
+
+
 @router.get("/runs")
 def get_runs(sess: UserSession = Depends(require_admin)):
-    return database.list_runs()
+    return [_enrich_connectivity(r) for r in database.list_runs()]
 
 
 @router.get("/runs/{run_id}")
@@ -80,7 +98,7 @@ def get_run(run_id: str, sess: UserSession = Depends(require_admin)):
     run = database.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Ejecución no encontrada")
-    return run
+    return _enrich_connectivity(run)
 
 
 # ── CRUD de definiciones ─────────────────────────────────────────────────────────

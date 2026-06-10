@@ -20,7 +20,7 @@ import time
 
 import database
 from core.deps import pve_client, tf_runner
-from services import actions, app_installer, blueprint_loader, validation
+from services import actions, app_installer, blueprint_loader, connectivity, validation
 from services.task_manager import (
     TaskStatus,
     create_and_queue_task,
@@ -63,6 +63,41 @@ def _san(value, maxlen: int = None) -> str:
     """Sanitiza a [a-z0-9-] (ids de pool/vnet/zone). Trunca si se indica maxlen."""
     out = re.sub(r"[^a-zA-Z0-9-]", "-", str(value)).strip("-").lower()
     return out[:maxlen] if maxlen else out
+
+
+def nics_from_params(params: dict) -> list:
+    """
+    Modelo NIC unificado [{bridge, ip_mode, ip, gateway}] desde los params de deploy_vms.
+    Usa el nuevo `nics` si viene; si no, lo deriva de los legacy bridges/ip_mode/ip_start/gateway
+    (la IP/gateway global se aplica SOLO a la primera interfaz; el resto, DHCP). Reusado por el
+    pre-flight para validar y por el handler para desplegar.
+    """
+    raw = params.get("nics")
+    if isinstance(raw, list) and raw:
+        nics = []
+        for n in raw:
+            if not isinstance(n, dict):
+                continue
+            mode = str(n.get("ip_mode") or "dhcp").lower()
+            nics.append({
+                "bridge": str(n.get("bridge") or "").strip(),
+                "ip_mode": "static" if mode == "static" else "dhcp",
+                "ip": str(n.get("ip") or "").strip(),
+                "gateway": str(n.get("gateway") or "").strip(),
+            })
+        return nics
+    # Legacy.
+    bridges = _split_list(params.get("bridges"))
+    is_static = str(params.get("ip_mode", "dhcp")).lower() == "static"
+    ip_start = str(params.get("ip_start") or "").strip()
+    gateway = str(params.get("gateway") or "").strip()
+    nics = []
+    for idx, b in enumerate(bridges):
+        if idx == 0 and is_static:
+            nics.append({"bridge": b, "ip_mode": "static", "ip": ip_start, "gateway": gateway})
+        else:
+            nics.append({"bridge": b, "ip_mode": "dhcp", "ip": "", "gateway": ""})
+    return nics
 
 
 def compute_derived(ctx: dict) -> dict:
@@ -121,7 +156,13 @@ def _h_create_pool(params: dict, owner: str):
     _require_valid("pool", poolid)
     comment = str(params.get("comment", ""))
     group = _opt(params, "group")
-    q_cpu, q_ram, q_disk = params.get("quota_cpu"), params.get("quota_ram_mb"), params.get("quota_disk_gb")
+    q_cpu, q_disk = params.get("quota_cpu"), params.get("quota_disk_gb")
+    # Cuota de RAM en GB (precedencia) o MB (legacy). Internamente SIEMPRE se almacena en MB.
+    _q_ram_gb = params.get("quota_ram_gb")
+    if _q_ram_gb is not None and str(_q_ram_gb).strip() not in ("", "None"):
+        q_ram = int(float(_q_ram_gb)) * 1024
+    else:
+        q_ram = params.get("quota_ram_mb")
 
     def run():
         pve_client.create_pool(poolid, comment=comment, groups=group)
@@ -183,17 +224,26 @@ def _h_deploy_vms(params: dict, owner: str):
     node = str(params["node"])
     template_id = int(params["template_id"])
     pool = _san(params["pool"]) if params.get("pool") else ""
-    bridges = _split_list(params.get("bridges"))
-    if not bridges:
-        raise ValueError("deploy_vms: se requiere al menos una red en 'bridges'")
+    nics = nics_from_params(params)
+    if not nics or not all(n["bridge"] for n in nics):
+        raise ValueError("deploy_vms: se requiere al menos una interfaz de red, cada una con su bridge/VNet.")
+    for n in nics:
+        if n["ip_mode"] == "static":
+            err = validation.validate_static_cidr(n["ip"])
+            if err:
+                raise ValueError(f"deploy_vms (interfaz {n['bridge']}): {err}")
+            if n["gateway"] and validation.validate_ip(n["gateway"]):
+                raise ValueError(f"deploy_vms (interfaz {n['bridge']}): puerta de enlace — {validation.validate_ip(n['gateway'])}")
     cpu = int(params.get("cpu", 2))
-    ram = int(params.get("ram_mb", 2048))
+    # RAM en GB (precedencia) o MB (legacy). Internamente SIEMPRE en MB.
+    _ram_gb = params.get("ram_gb")
+    if _ram_gb is not None and str(_ram_gb).strip() not in ("", "None"):
+        ram = int(float(_ram_gb)) * 1024
+    else:
+        ram = int(params.get("ram_mb", 2048))
     disk = int(params.get("disk_gb", 20))
     admin_user = str(params.get("admin_user") or "root")
     admin_password = str(params.get("admin_password") or "") or secrets.token_urlsafe(18)
-    is_static = str(params.get("ip_mode", "dhcp")).lower() == "static"
-    ip_start = params.get("ip_start")
-    gateway = str(params.get("gateway") or "")
     dns = _split_list(params.get("dns"))
     dns_domain = str(params.get("dns_domain") or "")
     ssh_keys = str(params.get("ssh_keys") or "")
@@ -201,18 +251,18 @@ def _h_deploy_vms(params: dict, owner: str):
     ttl_hours = int(_ttl) if str(_ttl).strip() not in ("", "None", "0") else None
     app_ids = _split_list(params.get("app_ids"))
 
-    # Validación autoritativa (mismas reglas que el pre-flight; defensa en runtime).
-    if is_static:
-        if not ip_start or not str(ip_start).strip():
-            raise ValueError("deploy_vms: con IP estática hay que indicar 'ip_start' en CIDR (ej. 10.0.0.10/24).")
-        err = validation.validate_static_cidr(str(ip_start))
-        if err:
-            raise ValueError(f"deploy_vms: {err}")
-        if gateway and validation.validate_ip(gateway):
-            raise ValueError(f"deploy_vms: puerta de enlace — {validation.validate_ip(gateway)}")
     for d in dns:
         if validation.validate_ip(d):
             raise ValueError(f"deploy_vms: DNS — {validation.validate_ip(d)}")
+
+    def _inst_nics(i: int) -> list:
+        out = []
+        for n in nics:
+            if n["ip_mode"] == "static":
+                out.append({"bridge": n["bridge"], "ip": _increment_ip(n["ip"], i), "gateway": n["gateway"]})
+            else:
+                out.append({"bridge": n["bridge"], "ip": "dhcp", "gateway": ""})
+        return out
 
     def run():
         base_id = pve_client.get_next_vmid()
@@ -223,17 +273,24 @@ def _h_deploy_vms(params: dict, owner: str):
             for i in range(count):
                 vmid = base_id + i
                 name = f"{base}-{i + 1}"
-                vm_ip = _increment_ip(ip_start, i) if (is_static and ip_start) else "dhcp"
+                inst_nics = _inst_nics(i)
                 cfg = VMConfig(
                     vm_id=vmid, node_name=node, template_id=template_id, vm_name=name,
-                    network_bridge=bridges[0], network_bridges=bridges,
+                    network_bridge=inst_nics[0]["bridge"], network_nics=inst_nics,
                     admin_user=admin_user, admin_password=admin_password,
-                    vm_ip=vm_ip, vm_gateway=(gateway if is_static else ""),
                     vm_dns=dns, vm_dns_domain=dns_domain, ssh_keys=ssh_keys,
                     vm_ram=ram, vm_cpu=cpu, disk_size=disk, vm_pool=pool,
                 )
                 tf_runner.deploy(cfg)
                 created.append({"vm_name": name, "vmid": vmid, "node": node})
+                # Comprobación de conectividad a internet: tarea de fondo SIN lock,
+                # igual que la instalación de apps. Su resultado se persiste y se
+                # muestra en el historial de ejecuciones del Blueprint.
+                run_unlocked_task(
+                    "Comprobación de red", name,
+                    (lambda n=node, v=vmid, nm=name: connectivity.check_vm_internet(n, v, nm)),
+                    owner,
+                )
                 if ttl_hours:
                     database.register_lifecycle(name, vmid, node, owner, pool,
                                                 time.time() + ttl_hours * 3600)

@@ -14,7 +14,7 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
       <h1 class="text-2xl font-bold text-white">Provisionamiento de Infraestructura</h1>
       <p class="text-sm text-slate-400">Despliega máquinas virtuales con aprovisionamiento automatizado vía Terraform.</p>
     </div>
-    <a href="/quotas" class="hidden sm:flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-blue-400 bg-slate-900 hover:bg-slate-800 px-3 py-2 rounded-lg border border-slate-800 transition-all">
+    <a href="/resources" class="hidden sm:flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-blue-400 bg-slate-900 hover:bg-slate-800 px-3 py-2 rounded-lg border border-slate-800 transition-all">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
       Ver cuota del pool
     </a>
@@ -120,11 +120,7 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
               <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
               Red y Seguridad
             </h3>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-              <div>
-                <label class={labelCls}>Red (Bridge/VNet)</label>
-                <select id="networkSelect" required disabled class={selectCls}><option value="">Selecciona un nodo primero</option></select>
-              </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label class={labelCls}>Usuario</label>
                 <input type="text" id="adminUser" required value="root" class={inputCls}>
@@ -134,27 +130,9 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
                 <input type="password" id="adminPassword" required placeholder="••••••••" class={inputCls}>
               </div>
             </div>
-            <div class="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
-              <div class="flex items-center gap-6 mb-3">
-                <label class="flex items-center gap-2 text-sm text-white cursor-pointer">
-                  <input type="radio" name="ipMode" value="DHCP" checked class="text-blue-500 focus:ring-blue-500 bg-slate-900 border-slate-700">
-                  DHCP Automático
-                </label>
-                <label class="flex items-center gap-2 text-sm text-white cursor-pointer">
-                  <input type="radio" name="ipMode" value="Static" class="text-blue-500 focus:ring-blue-500 bg-slate-900 border-slate-700">
-                  IP Estática
-                </label>
-              </div>
-              <div id="staticIpFields" class="hidden grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label class={labelCls}>Dirección IP (CIDR)<HelpTip text="IP con máscara, ej. 192.168.10.50/24. La máscara es necesaria para que la VM alcance su gateway." /></label>
-                  <input type="text" id="ipInput" placeholder="192.168.10.50/24" class={inputCls}>
-                </div>
-                <div>
-                  <label class={labelCls}>Puerta de Enlace</label>
-                  <input type="text" id="gatewayInput" placeholder="192.168.10.1" class={inputCls}>
-                </div>
-              </div>
+            <div>
+              <label class={labelCls}>Interfaces de red<HelpTip text="Una o varias NICs. Cada una con su bridge/VNet y su IP: DHCP o estática (IP en CIDR + gateway opcional). Para varias instancias, las IPs estáticas se autoincrementan. Los DNS son globales." /></label>
+              <div id="nicEditor" class="bg-slate-950/40 p-3 rounded-lg border border-slate-800 text-sm text-slate-500">Selecciona un nodo primero…</div>
             </div>
           </section>
 
@@ -211,17 +189,42 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
 
 <script>
   import { apiFetch } from '@/lib/api.ts';
+  import { nicEditor, type Nic } from '@/lib/nic.ts';
+  import { looksLikeStaticCidr, numberStepper } from '@/lib/ui.ts';
 
   const nodeSelect = document.getElementById('nodeSelect') as HTMLSelectElement;
   const templateSelect = document.getElementById('templateSelect') as HTMLSelectElement;
-  const networkSelect = document.getElementById('networkSelect') as HTMLSelectElement;
   const startIdInput = document.getElementById('startId') as HTMLInputElement;
   const consoleOutput = document.getElementById('consoleOutput');
   const submitBtn = document.getElementById('submitBtn') as HTMLButtonElement;
   const submitBtnText = document.getElementById('submitBtnText') as HTMLElement;
-  const ipModeRadios = document.getElementsByName('ipMode');
-  const staticIpFields = document.getElementById('staticIpFields');
   const quotaWarning = document.getElementById('quotaWarning') as HTMLElement;
+
+  // ---- editor de interfaces de red (multi-NIC, IP por interfaz) ----
+  const nicEditorBox = document.getElementById('nicEditor') as HTMLElement;
+  let deployNics: Nic[] = [{ bridge: '', ip_mode: 'dhcp' }];
+  let nodeNetworks: string[] = [];
+
+  function buildBridgeSelect(nic: Nic): HTMLElement {
+    const sel = document.createElement('select');
+    sel.className = 'w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none';
+    const opts = [...nodeNetworks];
+    if (nic.bridge && !opts.includes(nic.bridge)) opts.unshift(nic.bridge);
+    sel.innerHTML = '<option value="">— elige red —</option>' + opts.map(b => `<option value="${b}">${b}</option>`).join('');
+    sel.value = nic.bridge || '';
+    sel.addEventListener('change', () => { nic.bridge = sel.value; });
+    return sel;
+  }
+  function rebuildNicEditor() {
+    nicEditorBox.innerHTML = '';
+    nicEditorBox.className = 'bg-slate-950/40 p-3 rounded-lg border border-slate-800';
+    if (!nodeSelect.value) {
+      nicEditorBox.className += ' text-sm text-slate-500';
+      nicEditorBox.textContent = 'Selecciona un nodo primero…';
+      return;
+    }
+    nicEditorBox.appendChild(nicEditor({ nics: deployNics, renderBridge: buildBridgeSelect }));
+  }
 
   // ---- resource sliders ----
   document.getElementById('cpuRange')!.addEventListener('input', (e) => {
@@ -279,6 +282,9 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
     ttlHidden.value = String(d * 24);
   });
   selectTtl(document.querySelector('.ttl-pill[data-ttl="24"]') as HTMLElement);
+
+  // Steppers −/+ en los inputs numéricos estáticos (instancias, ID inicial, días TTL).
+  ['instances', 'startId', 'ttlCustomDays'].forEach((id) => numberStepper(document.getElementById(id) as HTMLInputElement));
 
   // ---- Catálogo de herramientas (multiselección) ----
   const toolCatalog = document.getElementById('toolCatalog') as HTMLElement;
@@ -375,18 +381,6 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
   // Re-run quota check whenever the quota widget refreshes its data
   document.addEventListener('quotaDataUpdated', checkQuotaOnClient);
 
-  ipModeRadios.forEach(radio => {
-    radio.addEventListener('change', (e) => {
-      if ((e.target as HTMLInputElement).value === 'Static') {
-        staticIpFields.classList.remove('hidden');
-        staticIpFields.classList.add('grid');
-      } else {
-        staticIpFields.classList.add('hidden');
-        staticIpFields.classList.remove('grid');
-      }
-    });
-  });
-
   let knownTaskStates = new Map();
   let isFirstLoad = true;
 
@@ -429,6 +423,19 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
 
     if (task.status === 'failed' && task.error) {
       div.innerHTML += `<div class="pl-[145px] text-red-500 text-[11px] mt-1 mb-2 border-l border-red-500/30 ml-8 py-1 bg-red-950/20 w-fit pr-4">└─ Error: ${task.error}</div>`;
+    }
+
+    // Comprobación de conectividad: indica si la VM tiene salida a internet
+    // (y por tanto si las apps extra del catálogo pudieron instalarse).
+    if (task.type === 'Comprobación de red' && task.status === 'completed') {
+      const net = task.result?.internet;
+      const label = net === true
+        ? '🌐 Con acceso a internet'
+        : net === false
+          ? '⚠ Sin acceso a internet (las apps extra pueden no haberse instalado)'
+          : '❓ Conectividad no determinada (guest-agent no respondió)';
+      const cls = net === true ? 'text-emerald-400' : net === false ? 'text-amber-400' : 'text-slate-500';
+      div.innerHTML += `<div class="pl-[145px] ml-8 py-0.5 ${cls} text-[11px]">└─ ${label}</div>`;
     }
 
     consoleOutput.appendChild(div);
@@ -491,14 +498,14 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
     const node = (e.target as HTMLSelectElement).value;
     if (!node) {
       templateSelect.disabled = true;
-      networkSelect.disabled = true;
+      nodeNetworks = []; rebuildNicEditor();
       return;
     }
 
     templateSelect.innerHTML = '<option value="">Cargando plantillas...</option>';
-    networkSelect.innerHTML = '<option value="">Cargando redes...</option>';
     templateSelect.disabled = false;
-    networkSelect.disabled = false;
+    nicEditorBox.className = 'bg-slate-950/40 p-3 rounded-lg border border-slate-800 text-sm text-slate-500';
+    nicEditorBox.textContent = 'Cargando redes…';
 
     try {
       const [tempRes, netRes] = await Promise.all([
@@ -514,32 +521,31 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
         templateSelect.innerHTML += `<option value="${id}">${label}</option>`;
       });
 
-      networkSelect.innerHTML = '';
-      if (networks.bridges.length > 0) {
-        const group = document.createElement('optgroup');
-        group.label = "Bridges Físicos";
-        networks.bridges.forEach(b => group.innerHTML += `<option value="${b}">${b}</option>`);
-        networkSelect.appendChild(group);
-      }
-      if (networks.vnets.length > 0) {
-        const group = document.createElement('optgroup');
-        group.label = "SDN VNets";
-        networks.vnets.forEach(v => group.innerHTML += `<option value="${v}">${v}</option>`);
-        networkSelect.appendChild(group);
-      }
+      nodeNetworks = [...(networks.bridges || []), ...(networks.vnets || [])];
+      rebuildNicEditor();
     } catch (error) {
       logToConsole("Error leyendo topología del nodo.", "error");
+      nicEditorBox.innerHTML = '<div class="text-sm text-red-400">Error leyendo redes del nodo.</div>';
     }
   });
 
   document.getElementById('deployForm').addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const mode = document.querySelector('input[name="ipMode"]:checked').value;
     const rawDns = (document.getElementById('dnsInput') as HTMLInputElement).value;
     const finalDns = rawDns ? rawDns.split(',').map(d => d.trim()).filter(Boolean) : [];
     const sshKeys = (document.getElementById('sshKeys') as HTMLTextAreaElement).value.trim();
     const dnsDomain = (document.getElementById('dnsDomainInput') as HTMLInputElement).value.trim();
+
+    // Validación cliente de las interfaces (el backend revalida).
+    const nicsClean = deployNics.filter(n => n.bridge);
+    if (!nicsClean.length) { logToConsole('Añade al menos una interfaz de red con su bridge/VNet.', 'error'); return; }
+    for (const n of nicsClean) {
+      if (n.ip_mode === 'static' && !looksLikeStaticCidr(n.ip || '')) {
+        logToConsole(`Interfaz ${n.bridge}: la IP estática debe ser CIDR con máscara (ej. 10.0.40.10/24).`, 'error');
+        return;
+      }
+    }
 
     const payload = {
       node_name: nodeSelect.value,
@@ -552,10 +558,7 @@ const selectCls = inputCls + " focus:border-blue-500 disabled:opacity-50 disable
       disk_size_gb: parseInt((document.getElementById('diskRange') as HTMLInputElement).value),
       admin_user: (document.getElementById('adminUser') as HTMLInputElement).value,
       admin_password: (document.getElementById('adminPassword') as HTMLInputElement).value,
-      network_bridge: networkSelect.value,
-      ip_mode: mode,
-      vm_ip_start: mode === 'Static' ? (document.getElementById('ipInput') as HTMLInputElement).value : null,
-      vm_gateway: mode === 'Static' ? (document.getElementById('gatewayInput') as HTMLInputElement).value : null,
+      nics: nicsClean,
       vm_dns: finalDns,
       vm_dns_domain: dnsDomain,
       ssh_keys: sshKeys,

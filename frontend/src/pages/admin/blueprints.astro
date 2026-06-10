@@ -120,7 +120,8 @@ if (Astro.locals.user?.realm !== 'pam') {
 
 <script>
   import { apiFetch } from '@/lib/api.ts';
-  import { toast, helpIcon, statusBadgeClass } from '@/lib/ui.ts';
+  import { toast, helpIcon, statusBadgeClass, looksLikeStaticCidr, looksLikeCidr, numberStepper, confirmDialog } from '@/lib/ui.ts';
+  import { nicEditor, nicsFromLegacy } from '@/lib/nic.ts';
 
   const INPUT = 'w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none';
   const SELECT = INPUT + ' focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed';
@@ -235,6 +236,7 @@ if (Astro.locals.user?.realm !== 'pam') {
     }
     control.dataset.key = v.key; if (v.depends_on) control.dataset.dependsOn = v.depends_on;
     wrap.appendChild(control);
+    if (v.type === 'int') numberStepper(control);
     if (isRange) { const s = lab.querySelector('[data-val]') as HTMLElement; s.textContent = control.value; control.addEventListener('input', () => s.textContent = control.value); }
     return { wrap, control, v };
   }
@@ -324,6 +326,24 @@ if (Astro.locals.user?.realm !== 'pam') {
 
   function stepIcon(s: string) { return s === 'completed' ? '<span class="text-emerald-400">✓</span>' : s === 'failed' ? '<span class="text-red-400">✗</span>' : s === 'running' ? '<span class="text-blue-400 animate-pulse">●</span>' : s === 'rolled_back' || s === 'rollback_partial' ? '<span class="text-orange-400">↩</span>' : '<span class="text-slate-600">○</span>'; }
 
+  // Para pasos `deploy_vms`: lista cada VM creada con su estado de conectividad a
+  // internet (indica si las apps extra del catálogo pudieron instalarse).
+  function vmsConnectivityHtml(step: any): string {
+    const vms = step.action === 'deploy_vms' ? (step.ref?.vms || []) : [];
+    if (!vms.length) return '';
+    return `<div class="mt-1 space-y-0.5">${vms.map((vm: any) => {
+      const net = vm.internet;
+      const badge = net === true
+        ? '<span class="text-emerald-400">🌐 Internet</span>'
+        : net === false
+          ? '<span class="text-amber-400">⚠ Sin internet</span>'
+          : '<span class="text-slate-500">… comprobando</span>';
+      return `<div class="flex items-center gap-1.5 text-[11px] text-slate-500 pl-1">` +
+        `<span class="text-slate-600">└</span><span class="truncate">${escapeHtml(vm.vm_name)}</span>` +
+        `<span class="ml-auto shrink-0">${badge}</span></div>`;
+    }).join('')}</div>`;
+  }
+
   // ── CONSTRUCTOR ────────────────────────────────────────────────────────────────
   function builderShowErr(el: HTMLElement, msg: string) { el.textContent = msg; el.classList.remove('hidden'); }
   function varKeys(): string[] { return state.variables.map((v: any) => v.key).filter(Boolean); }
@@ -354,10 +374,26 @@ if (Astro.locals.user?.realm !== 'pam') {
     fillBuilder('Duplicar Blueprint');
   }
 
+  // Migra RAM de MB (legacy) a GB en blueprints antiguos al abrirlos en el constructor.
+  function migrateLegacyRam() {
+    (state.steps || []).forEach((s: any) => {
+      const p = s.params || {};
+      if (s.action === 'create_pool') {
+        if (p.quota_ram_gb == null && p.quota_ram_mb != null) p.quota_ram_gb = Math.max(1, Math.round(Number(p.quota_ram_mb) / 1024));
+        delete p.quota_ram_mb;
+      }
+      if (s.action === 'deploy_vms') {
+        if (p.ram_gb == null && p.ram_mb != null) p.ram_gb = Math.max(1, Math.round(Number(p.ram_mb) / 1024));
+        delete p.ram_mb;
+      }
+    });
+  }
+
   function fillBuilder(title: string) {
     builderTitle.textContent = title;
     bldName.value = state.name; bldDesc.value = state.description; bldOnFailure.value = state.on_failure;
     builderError.classList.add('hidden');
+    migrateLegacyRam();
     renderVars(); renderSteps();
     builder.showModal();
   }
@@ -409,7 +445,7 @@ if (Astro.locals.user?.realm !== 'pam') {
     const action = paletteSelect.value; if (!action || !ACTIONS[action]) return;
     const params: Record<string, any> = {};
     (ACTIONS[action].params || []).forEach((p: any) => { if (p.default != null) params[p.key] = p.default; });
-    if (action === 'deploy_vms') Object.assign(params, { count: 1, cpu: 2, ram_mb: 2048, disk_gb: 20, admin_user: 'root', ip_mode: 'dhcp', ttl_hours: 24, bridges: [], app_ids: [] });
+    if (action === 'deploy_vms') Object.assign(params, { count: 1, cpu: 2, ram_gb: 2, disk_gb: 20, admin_user: 'root', ttl_hours: 24, nics: [{ bridge: '', ip_mode: 'dhcp' }], app_ids: [] });
     state.steps.push({ id: `${action}-${state.steps.length + 1}`, action, name: ACTIONS[action].label, params });
     renderSteps();
   });
@@ -437,7 +473,7 @@ if (Astro.locals.user?.realm !== 'pam') {
         c.appendChild(renderDeployEditor(s));
       } else {
         const pg = document.createElement('div'); pg.className = 'grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2';
-        (schema.params || []).forEach((p: any) => pg.appendChild(paramControl(s, p)));
+        (schema.params || []).filter((p: any) => !p.hidden).forEach((p: any) => pg.appendChild(paramControl(s, p)));
         c.appendChild(pg);
       }
       stepList.appendChild(c);
@@ -504,19 +540,7 @@ if (Astro.locals.user?.realm !== 'pam') {
     return f;
   }
 
-  // — helpers de inputs del builder (helpIcon viene de @/lib/ui) —
-  // Validadores cliente (ligeros; el backend es la autoridad).
-  function looksLikeIp(v: string): boolean { return /^(\d{1,3})(\.\d{1,3}){3}$/.test(v.trim()) && v.trim().split('.').every(o => +o <= 255); }
-  function looksLikeStaticCidr(v: string): boolean {
-    const m = v.trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/); if (!m) return false;
-    const ipOk = m[1].split('.').every(o => +o <= 255); const pfx = +m[2];
-    return ipOk && pfx >= 1 && pfx <= 31;   // exige máscara de red real (no /32)
-  }
-  function looksLikeCidr(v: string): boolean {
-    const m = v.trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/); if (!m) return false;
-    return m[1].split('.').every(o => +o <= 255) && +m[2] <= 32;
-  }
-
+  // — helpers de inputs del builder (helpIcon/looksLike* vienen de @/lib/ui) —
   function fieldInput(label: string, ph: string, value: any, onInput: (v: string) => void, type = 'text', help = ''): HTMLElement {
     const w = document.createElement('div');
     w.innerHTML = `<label class="block text-[11px] font-medium text-slate-500 mb-0.5">${label}</label>`;
@@ -524,7 +548,9 @@ if (Astro.locals.user?.realm !== 'pam') {
     const inp = document.createElement('input'); inp.type = type; inp.placeholder = ph || '';
     inp.value = value == null ? '' : value; inp.className = INPUT;
     inp.addEventListener('input', () => onInput(inp.value));
-    w.appendChild(inp); return w;
+    w.appendChild(inp);
+    if (type === 'number') numberStepper(inp);
+    return w;
   }
   function fieldSelect(label: string, opts: any[], value: any, onChange: (v: string) => void, help = ''): HTMLElement {
     const w = document.createElement('div');
@@ -579,9 +605,14 @@ if (Astro.locals.user?.realm !== 'pam') {
 
   function renderDeployEditor(step: any): HTMLElement {
     const p = step.params;
-    p.count = p.count ?? 1; p.cpu = p.cpu ?? 2; p.ram_mb = p.ram_mb ?? 2048; p.disk_gb = p.disk_gb ?? 20;
-    p.admin_user = p.admin_user ?? 'root'; p.ip_mode = p.ip_mode ?? 'dhcp';
-    if (!Array.isArray(p.bridges)) p.bridges = p.bridges ? [p.bridges] : [];
+    p.count = p.count ?? 1; p.cpu = p.cpu ?? 2; p.ram_gb = p.ram_gb ?? 2; p.disk_gb = p.disk_gb ?? 20;
+    p.admin_user = p.admin_user ?? 'root';
+    // Migración: blueprints antiguos traen bridges/ip_mode/ip_start/gateway → modelo por-NIC.
+    if (!Array.isArray(p.nics)) {
+      p.nics = nicsFromLegacy(p);
+      delete p.bridges; delete p.ip_mode; delete p.ip_start; delete p.gateway;
+    }
+    if (!p.nics.length) p.nics = [{ bridge: '', ip_mode: 'dhcp' }];
     if (!Array.isArray(p.app_ids)) p.app_ids = p.app_ids ? [p.app_ids] : [];
     if (p.ttl_hours === undefined) p.ttl_hours = 24;
 
@@ -594,7 +625,7 @@ if (Astro.locals.user?.realm !== 'pam') {
     r1.appendChild(num('Instancias', 'count'));
     r1.appendChild(txt('Nombre base *', 'base_name', 'web'));
     r1.appendChild(num('vCPU', 'cpu'));
-    r1.appendChild(num('RAM (MB)', 'ram_mb'));
+    r1.appendChild(num('RAM (GB)', 'ram_gb'));
     root.appendChild(r1);
 
     const r2 = grid4();
@@ -669,53 +700,46 @@ if (Astro.locals.user?.realm !== 'pam') {
     const r3 = document.createElement('div'); r3.className = 'grid grid-cols-1 sm:grid-cols-3 gap-2';
     r3.appendChild(nodeWrap); r3.appendChild(tplWrap); r3.appendChild(poolWrap); root.appendChild(r3);
 
-    // Redes: chips concretos (si nodo fijo) + tokens variable
-    const netWrap = document.createElement('div'); netWrap.innerHTML = '<label class="block text-[11px] font-medium text-slate-500 mb-1">Redes (multi-NIC) *</label>';
-    const netBox = document.createElement('div'); netBox.className = 'flex flex-wrap gap-1.5 items-center'; netWrap.appendChild(netBox);
-    root.appendChild(netWrap);
+    // Interfaces de red (multi-NIC, IP por interfaz). Cada NIC: bridge concreto o {{var}};
+    // DHCP o estática con IP/gateway (concretos o {{var}}). Migración legacy ya hecha arriba.
+    const netWrap = document.createElement('div');
+    netWrap.innerHTML = '<label class="block text-[11px] font-medium text-slate-500 mb-1">Interfaces de red (multi-NIC) *</label>';
+    const nicMount = document.createElement('div'); netWrap.appendChild(nicMount); root.appendChild(netWrap);
+
+    let nodeBridges: string[] = [];
+    const fixedNode = () => (!nodeHdr.cbx.checked && p.node) ? p.node : null;
+
+    function bridgeControl(nic: any): HTMLElement {
+      const wrap = document.createElement('div'); wrap.className = 'flex gap-1 items-center';
+      const inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = 'vmbrX / vnet / {{var}}';
+      inp.value = nic.bridge || ''; inp.className = INPUT;
+      inp.addEventListener('input', () => { nic.bridge = inp.value; });
+      wrap.appendChild(inp);
+      const opts = [...nodeBridges, ...varKeys().map(k => `{{${k}}}`)];
+      if (opts.length) {
+        const pick = document.createElement('select');
+        pick.className = 'bg-slate-900 border border-slate-800 rounded px-1 py-1 text-[10px] text-slate-400 shrink-0';
+        pick.innerHTML = '<option value="">↘</option>' + opts.map(o => `<option value="${o}">${o}</option>`).join('');
+        pick.addEventListener('change', () => { if (pick.value) { nic.bridge = pick.value; inp.value = pick.value; pick.value = ''; } });
+        wrap.appendChild(pick);
+      }
+      return wrap;
+    }
+    function ipDecorate(input: HTMLInputElement, key: 'ip' | 'gateway', nic: any) {
+      const keys = varKeys(); if (!keys.length) return;
+      const pick = document.createElement('select');
+      pick.className = 'mt-1 bg-slate-900 border border-slate-800 rounded px-1 py-0.5 text-[10px] text-slate-400';
+      pick.innerHTML = '<option value="">↘ insertar {{var}}</option>' + keys.map(k => `<option value="${k}">${k}</option>`).join('');
+      pick.addEventListener('change', () => { if (pick.value) { const tok = `{{${pick.value}}}`; input.value = tok; nic[key] = tok; pick.value = ''; } });
+      input.parentElement!.appendChild(pick);
+    }
     function renderNet() {
-      netBox.innerHTML = '';
-      (p.bridges || []).filter((b: string) => /^\{\{.*\}\}$/.test(String(b))).forEach((tok: string) => {
-        const chip = document.createElement('button'); chip.type = 'button'; chip.className = pill(true); chip.textContent = tok + ' ✕';
-        chip.addEventListener('click', () => { p.bridges = p.bridges.filter((x: string) => x !== tok); renderNet(); });
-        netBox.appendChild(chip);
-      });
-      const cn = (!nodeHdr.cbx.checked && p.node) ? p.node : null;
-      if (cn) {
-        apiFetch(`/nodes/${cn}/networks`).then(r => r.json()).then((nets: any) => {
-          [...(nets.bridges || []), ...(nets.vnets || [])].forEach((n: string) => {
-            const on = () => p.bridges.includes(n);
-            const b = document.createElement('button'); b.type = 'button'; b.textContent = n; b.className = pill(on());
-            b.addEventListener('click', () => { if (on()) p.bridges = p.bridges.filter((x: string) => x !== n); else p.bridges.push(n); b.className = pill(on()); });
-            netBox.appendChild(b);
-          });
-        }).catch(() => {});
-      } else if (!(p.bridges || []).some((b: string) => /^\{\{.*\}\}$/.test(String(b)))) {
-        const d = document.createElement('span'); d.className = 'text-[11px] text-slate-600'; d.textContent = 'Elige un nodo fijo o añade una variable →'; netBox.appendChild(d);
-      }
-      if (varKeys().length) {
-        const add = document.createElement('select'); add.className = 'bg-slate-900 border border-slate-800 rounded px-1 py-0.5 text-[10px] text-slate-400';
-        add.innerHTML = '<option value="">➕ variable</option>' + varKeys().map(k => `<option value="${k}">{{${k}}}</option>`).join('');
-        add.addEventListener('change', () => { if (add.value) { const tok = `{{${add.value}}}`; if (!p.bridges.includes(tok)) p.bridges.push(tok); renderNet(); } });
-        netBox.appendChild(add);
-      }
+      const build = () => { nicMount.innerHTML = ''; nicMount.appendChild(nicEditor({ nics: p.nics, renderBridge: bridgeControl, decorateText: ipDecorate })); };
+      const cn = fixedNode();
+      if (cn) apiFetch(`/nodes/${cn}/networks`).then(r => r.json()).then((nets: any) => { nodeBridges = [...(nets.bridges || []), ...(nets.vnets || [])]; build(); }).catch(() => { nodeBridges = []; build(); });
+      else { nodeBridges = []; build(); }
     }
     renderNode(); renderTpl(); renderPool(); renderNet();
-
-    // Modo IP (condicional)
-    const ipWrap = document.createElement('div'); ipWrap.className = 'bg-slate-900/40 border border-slate-800 rounded-lg p-2';
-    const modes = document.createElement('div'); modes.className = 'flex gap-4 mb-2 text-[11px] text-slate-300';
-    const staticBox = document.createElement('div'); staticBox.className = 'grid grid-cols-2 gap-2'; staticBox.style.display = p.ip_mode === 'static' ? 'grid' : 'none';
-    [['dhcp', 'DHCP'], ['static', 'IP estática']].forEach(([m, lbl]) => {
-      const lab = document.createElement('label'); lab.className = 'flex items-center gap-1.5 cursor-pointer';
-      const rb = document.createElement('input'); rb.type = 'radio'; rb.name = `ipmode-${step.id}`; rb.value = m; rb.checked = p.ip_mode === m; rb.className = 'text-blue-500';
-      rb.addEventListener('change', () => { p.ip_mode = m; staticBox.style.display = m === 'static' ? 'grid' : 'none'; });
-      lab.appendChild(rb); lab.appendChild(document.createTextNode(lbl)); modes.appendChild(lab);
-    });
-    ipWrap.appendChild(modes);
-    staticBox.appendChild(txt('IP inicial (CIDR)', 'ip_start', '10.0.0.10/24', 'Primera IP CON máscara (ej. 10.0.0.10/24). Para varias VMs se autoincrementa.'));
-    staticBox.appendChild(txt('Gateway', 'gateway', '10.0.0.1', 'IP del router de la red (ej. 10.0.0.1).'));
-    ipWrap.appendChild(staticBox); root.appendChild(ipWrap);
 
     // DNS / SSH
     const r4 = document.createElement('div'); r4.className = 'grid grid-cols-1 sm:grid-cols-2 gap-2';
@@ -772,11 +796,18 @@ if (Astro.locals.user?.realm !== 'pam') {
     // Validación cliente del constructor (el backend revalida en pre-flight/run).
     const berrs: string[] = [];
     state.steps.forEach((s: any, i: number) => {
-      if (s.action === 'deploy_vms' && s.params.ip_mode === 'static') {
-        const ip = String(s.params.ip_start || '').trim();
-        if (!ip) berrs.push(`Fase #${i + 1}: falta la IP inicial (estática).`);
-        else if (!/\{\{/.test(ip) && !looksLikeStaticCidr(ip)) berrs.push(`Fase #${i + 1}: la IP inicial debe ser CIDR con máscara real (ej. 10.0.0.10/24).`);
+      if (s.action !== 'deploy_vms') return;
+      const nics = Array.isArray(s.params.nics) ? s.params.nics : [];
+      if (!nics.length || !nics.every((n: any) => String(n.bridge || '').trim())) {
+        berrs.push(`Fase #${i + 1}: cada interfaz de red necesita un bridge/VNet.`);
       }
+      nics.forEach((n: any) => {
+        if (n.ip_mode === 'static') {
+          const ip = String(n.ip || '').trim();
+          if (!ip) berrs.push(`Fase #${i + 1} (interfaz ${n.bridge || '?'}): falta la IP estática.`);
+          else if (!/\{\{/.test(ip) && !looksLikeStaticCidr(ip)) berrs.push(`Fase #${i + 1} (interfaz ${n.bridge || '?'}): la IP debe ser CIDR con máscara real (ej. 10.0.40.10/24).`);
+        }
+      });
     });
     if (berrs.length) { builderShowErr(builderError, berrs.join(' ')); return; }
     const payload = serialize();
@@ -795,8 +826,13 @@ if (Astro.locals.user?.realm !== 'pam') {
   document.getElementById('bpNewBtn')!.addEventListener('click', openNew);
 
   async function removeBlueprint(id: string, name: string) {
-    if (!confirm(`¿Eliminar el blueprint "${name}"?`)) return;
-    try { await apiFetch(`/admin/blueprints/${id}`, { method: 'DELETE' }); loadBlueprints(); } catch (e) { alert('No se pudo eliminar'); }
+    const ok = await confirmDialog(`Eliminar blueprint «${name}»`, 'Se eliminará la receta de forma permanente. Esta acción no se puede deshacer.');
+    if (!ok) return;
+    try {
+      const res = await apiFetch(`/admin/blueprints/${id}`, { method: 'DELETE' });
+      if (res.ok) { toast(`Blueprint «${name}» eliminado.`, 'success'); loadBlueprints(); }
+      else { const d = await res.json().catch(() => ({})); toast(typeof d.detail === 'string' ? d.detail : 'No se pudo eliminar.', 'error'); }
+    } catch (e) { toast('Error de red al eliminar.', 'error'); }
   }
 
   // ── Panel de Ejecuciones (en vivo, reload-safe) ────────────────────────────────
@@ -815,7 +851,7 @@ if (Astro.locals.user?.realm !== 'pam') {
         const active = !TERMINAL.includes(r.status);
         const open = active || expandedRuns.has(r.run_id);
         const stepsHtml = steps.length
-          ? steps.map((s: any) => `<div class="flex items-start gap-2 text-xs"><span class="mt-0.5">${stepIcon(s.status)}</span><div class="flex-1 min-w-0"><div class="text-slate-300 truncate">${escapeHtml(s.name || s.action)}</div>${s.error ? `<div class="text-[11px] text-red-400 mt-0.5 break-words">${escapeHtml(s.error)}</div>` : ''}</div></div>`).join('')
+          ? steps.map((s: any) => `<div class="flex items-start gap-2 text-xs"><span class="mt-0.5">${stepIcon(s.status)}</span><div class="flex-1 min-w-0"><div class="text-slate-300 truncate">${escapeHtml(s.name || s.action)}</div>${s.error ? `<div class="text-[11px] text-red-400 mt-0.5 break-words">${escapeHtml(s.error)}</div>` : ''}${vmsConnectivityHtml(s)}</div></div>`).join('')
           : '<div class="text-[11px] text-slate-600">Preparando…</div>';
         return `<div class="border border-slate-800 rounded-lg overflow-hidden">
           <button type="button" data-run="${r.run_id}" class="run-head w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-800/40 transition-colors text-left">

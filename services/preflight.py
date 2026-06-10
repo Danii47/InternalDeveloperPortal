@@ -188,6 +188,7 @@ def preflight(bp: dict, inputs: dict) -> dict:
             _group_ok(label, _opt(p.get("group")))
             # Cuotas dentro de rango (si se indican explícitamente).
             for key, lbl, lo, hi in (("quota_cpu", "Cuota vCPU", 1, 4096),
+                                     ("quota_ram_gb", "Cuota RAM (GB)", 1, 16384),
                                      ("quota_ram_mb", "Cuota RAM (MB)", 256, 16777216),
                                      ("quota_disk_gb", "Cuota disco (GB)", 1, 1048576)):
                 val = p.get(key)
@@ -243,6 +244,7 @@ def preflight(bp: dict, inputs: dict) -> dict:
             count = _intval(p.get("count"), 1)
             if count < 1 or count > orchestrator.MAX_VMS_PER_STEP:
                 errors.append(f"{label}: nº de instancias fuera de rango (1-{orchestrator.MAX_VMS_PER_STEP}).")
+            nics = orchestrator.nics_from_params(p)   # modelo unificado (nuevo 'nics' o legacy)
             node = _opt(p.get("node"))
             if not node:
                 errors.append(f"{label}: falta el nodo.")
@@ -260,20 +262,17 @@ def preflight(bp: dict, inputs: dict) -> dict:
                             _tpl_cache[node] = set()
                     if tpl not in _tpl_cache[node]:
                         errors.append(f"{label}: la plantilla '{tpl}' no existe en el nodo '{node}'.")
-                bridges = p.get("bridges") or []
-                if isinstance(bridges, str):
-                    bridges = [bridges]
-                if not bridges:
-                    errors.append(f"{label}: falta al menos una red.")
+                if not nics or not all(n["bridge"] for n in nics):
+                    errors.append(f"{label}: falta al menos una interfaz de red (con bridge/VNet).")
                 else:
                     if node not in _net_cache:
                         try:
-                            n = pve_client.get_networks(node)
-                            _net_cache[node] = set(n.get("bridges", [])) | set(n.get("vnets", []))
+                            nn = pve_client.get_networks(node)
+                            _net_cache[node] = set(nn.get("bridges", [])) | set(nn.get("vnets", []))
                         except Exception:
                             _net_cache[node] = set()
-                    for b in bridges:
-                        b = str(b).strip()
+                    for nic in nics:
+                        b = nic["bridge"]
                         if b and b not in _net_cache[node] and b not in planned_vnets:
                             errors.append(f"{label}: la red '{b}' no existe ni se crea en un paso previo.")
             pool = _opt(p.get("pool"))
@@ -285,26 +284,26 @@ def preflight(bp: dict, inputs: dict) -> dict:
                     if name in existing_vms:
                         errors.append(f"{label}: ya existe una VM llamada '{name}' (¿blueprint ya lanzado?).")
                     planned_vms.add(name)
-            # IP estática: inicio en CIDR (con máscara) y puerta de enlace válida.
-            if (_opt(p.get("ip_mode")) or "dhcp").lower() == "static":
-                ip_start = _opt(p.get("ip_start"))
-                if not ip_start:
-                    errors.append(f"{label}: con IP estática debes indicar la IP inicial en CIDR (ej. 10.0.0.10/24).")
-                elif not _is_tpl(ip_start):
-                    ce = validation.validate_static_cidr(ip_start)
+            # IP por interfaz: cada NIC estática necesita IP en CIDR (con máscara) y gateway válido.
+            for nic in nics:
+                if nic["ip_mode"] != "static":
+                    continue
+                b = nic["bridge"] or "?"
+                if not nic["ip"]:
+                    errors.append(f"{label}: la interfaz '{b}' es estática pero no tiene IP (CIDR, ej. 10.0.0.10/24).")
+                elif not _is_tpl(nic["ip"]):
+                    ce = validation.validate_static_cidr(nic["ip"])
                     if ce:
-                        errors.append(f"{label}: {ce}")
-                gw = _opt(p.get("gateway"))
-                if gw and not _is_tpl(gw):
-                    ge = validation.validate_ip(gw)
-                    if ge:
-                        errors.append(f"{label}: puerta de enlace — {ge}")
+                        errors.append(f"{label} (interfaz {b}): {ce}")
+                if nic["gateway"] and not _is_tpl(nic["gateway"]) and validation.validate_ip(nic["gateway"]):
+                    errors.append(f"{label} (interfaz {b}): puerta de enlace — {validation.validate_ip(nic['gateway'])}")
             # DNS (en cualquier modo): cada servidor debe ser una IP válida.
             for d in _aslist(p.get("dns")):
                 if not _is_tpl(d) and validation.validate_ip(d):
                     errors.append(f"{label}: DNS — {validation.validate_ip(d)}")
             # Recursos dentro de rango.
             for key, lbl, lo, hi in (("cpu", "vCPU", 1, 512),
+                                     ("ram_gb", "RAM (GB)", 1, 4096),
                                      ("ram_mb", "RAM (MB)", 128, 4194304),
                                      ("disk_gb", "Disco (GB)", 1, 1048576)):
                 val = p.get(key)

@@ -260,6 +260,7 @@ def get_tasks(sess: UserSession = Depends(get_current_session)):
             "error": task.get("error"),
             "owner": task_owner,
             "updated_at": task.get("updated_at"),
+            "result": task.get("result"),
         })
 
     for k in keys_to_delete:

@@ -1,0 +1,253 @@
+---
+import Layout from '../../layouts/Layout.astro';
+
+// Página exclusiva de administradores (mismo guard SSR que /admin/blueprints).
+if (Astro.locals.user?.realm !== 'pam') {
+  return Astro.redirect('/');
+}
+---
+
+<Layout title="Pools y Grupos | Proxmox IDP">
+  <div class="mb-5 flex items-end justify-between gap-4 ui-fade-in">
+    <div>
+      <h1 class="text-2xl font-bold text-white">Pools y Grupos</h1>
+      <p class="text-sm text-slate-400">Gestiona los Resource Pools y los grupos del clúster: consúltalos y elimínalos de forma segura.</p>
+    </div>
+    <button id="tnRefresh" class="ui-btn ui-btn-ghost">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+      Refrescar
+    </button>
+  </div>
+
+  <div class="flex gap-1 mb-5 border-b border-slate-800">
+    <button data-tab="pools" class="tn-tab"></button>
+    <button data-tab="groups" class="tn-tab"></button>
+  </div>
+
+  <!-- Pools -->
+  <section id="tabPools">
+    <p class="text-xs text-slate-500 mb-4">La <span class="text-slate-300">cuota</span> es el tope de CPU/RAM/disco que pueden sumar todas las VMs del pool. Edita los valores y pulsa <span class="text-slate-300">Guardar</span>. <span class="text-slate-300">Eliminar</span> un pool se bloquea si todavía contiene recursos (las VMs no se tocan).</p>
+    <div id="poolsLoading" class="py-16 text-center text-slate-500 text-sm">Cargando pools…</div>
+    <div id="poolsGrid" class="hidden grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 ui-stagger"></div>
+    <div id="poolsEmpty" class="hidden py-16 text-center text-slate-500 text-sm">No hay pools en el clúster.</div>
+  </section>
+
+  <!-- Grupos -->
+  <section id="tabGroups" class="hidden">
+    <div id="groupsLoading" class="py-16 text-center text-slate-500 text-sm">Cargando grupos…</div>
+    <div id="groupsGrid" class="hidden grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 ui-stagger"></div>
+    <div id="groupsEmpty" class="hidden py-16 text-center text-slate-500 text-sm">No hay grupos en el clúster.</div>
+  </section>
+
+</Layout>
+
+<script>
+  import { apiFetch } from '@/lib/api.ts';
+  import { toast, confirmDialog, numberStepper } from '@/lib/ui.ts';
+
+  const esc = (s: any) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c]);
+
+  const tabPools = document.getElementById('tabPools')!;
+  const tabGroups = document.getElementById('tabGroups')!;
+  const poolsGrid = document.getElementById('poolsGrid')!;
+  const poolsLoading = document.getElementById('poolsLoading')!;
+  const poolsEmpty = document.getElementById('poolsEmpty')!;
+  const groupsGrid = document.getElementById('groupsGrid')!;
+  const groupsLoading = document.getElementById('groupsLoading')!;
+  const groupsEmpty = document.getElementById('groupsEmpty')!;
+
+  let ALL_USERS: string[] = [];   // userids del clúster (para añadir miembros)
+
+  // ── Tabs ──
+  function showTab(t: string) {
+    tabPools.classList.toggle('hidden', t !== 'pools');
+    tabGroups.classList.toggle('hidden', t !== 'groups');
+    document.querySelectorAll('.tn-tab').forEach((b: any) => {
+      const on = b.dataset.tab === t;
+      b.textContent = b.dataset.tab === 'pools' ? 'Pools' : 'Grupos';
+      b.className = 'tn-tab px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ' +
+        (on ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-white');
+    });
+    if (t === 'pools') loadPools(); else loadGroups();
+  }
+  document.querySelectorAll('.tn-tab').forEach((b: any) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+  // ── Helpers de uso ──
+  const pct = (u: number, m: number) => m <= 0 ? '0%' : `${Math.min(100, Math.round((u / m) * 100))}%`;
+  const barCls = (u: number, m: number) => { const p = m > 0 ? (u / m) * 100 : 0; return p >= 90 ? 'bg-red-500' : p >= 75 ? 'bg-orange-400' : 'bg-emerald-500'; };
+  const fmtRam = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+  const inputCls = 'w-16 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-center text-white text-sm focus:ring-1 focus:ring-blue-500 outline-none';
+
+  // Una fila de cuota: uso (barra) + input editable del máximo.
+  function quotaRow(label: string, field: string, usedTxt: string, used: number, max: number, value: string | number, unit: string, step = '1'): string {
+    return `<div class="space-y-1">
+      <div class="flex items-center justify-between text-[11px] text-slate-400">
+        <span class="uppercase tracking-wider text-slate-500">${label}</span>
+        <div class="flex items-center gap-1.5">
+          <span class="text-slate-300">${usedTxt} /</span>
+          <input data-field="${field}" type="number" min="1" step="${step}" value="${value}" class="${inputCls}">
+          <span class="text-slate-500">${unit}</span>
+        </div>
+      </div>
+      <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden"><div class="h-full rounded-full ${barCls(used, max)}" style="width:${pct(used, max)}"></div></div>
+    </div>`;
+  }
+
+  // ── Pools (editar cuota + borrar) ──
+  async function loadPools() {
+    poolsLoading.classList.remove('hidden'); poolsGrid.classList.add('hidden'); poolsEmpty.classList.add('hidden');
+    try {
+      const res = await apiFetch('/admin/pools');
+      if (!res.ok) { poolsLoading.textContent = 'No se pudieron cargar los pools.'; return; }
+      const data: any[] = await res.json();
+      poolsLoading.classList.add('hidden');
+      if (!data.length) { poolsEmpty.classList.remove('hidden'); return; }
+      poolsGrid.innerHTML = data.map((e) => {
+        const q = e.quota, us = e.usage;
+        return `<div class="ui-card ui-card-hover overflow-hidden" data-pool="${esc(e.pool_name)}">
+          <div class="bg-slate-950/60 border-b border-slate-800 px-4 py-3 flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <div class="font-mono text-sm text-blue-300 truncate">${esc(e.pool_name)}</div>
+              <div class="text-[10px] text-slate-500">${e.member_count} recurso(s)</div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button data-save-pool="${esc(e.pool_name)}" class="ui-btn ui-btn-primary !py-1.5 !px-2.5 text-xs">Guardar</button>
+              <button data-del-pool="${esc(e.pool_name)}" class="ui-btn ui-btn-danger !py-1.5 !px-2.5 text-xs">Eliminar</button>
+            </div>
+          </div>
+          <div class="p-4 space-y-3">
+            ${quotaRow('CPU', 'max_cpu', `${us.cpu}`, us.cpu, q.max_cpu, q.max_cpu, 'vCPU')}
+            ${quotaRow('RAM', 'max_ram_gb', fmtRam(us.ram_mb), us.ram_mb, q.max_ram_mb, (q.max_ram_mb / 1024).toFixed(0), 'GB')}
+            ${quotaRow('Disco', 'max_disk_gb', `${us.disk_gb.toFixed(1)} GB`, us.disk_gb, q.max_disk_gb, q.max_disk_gb, 'GB')}
+          </div>
+        </div>`;
+      }).join('');
+      poolsGrid.classList.remove('hidden');
+      poolsGrid.querySelectorAll('input[type="number"]').forEach((i: any) => numberStepper(i));
+    } catch (_) { poolsLoading.textContent = 'Error de red.'; }
+  }
+
+  async function savePoolQuota(poolName: string) {
+    const card = poolsGrid.querySelector(`[data-pool="${CSS.escape(poolName)}"]`) as HTMLElement;
+    if (!card) return;
+    const max_cpu = parseInt((card.querySelector('[data-field="max_cpu"]') as HTMLInputElement).value);
+    const ram_gb = parseFloat((card.querySelector('[data-field="max_ram_gb"]') as HTMLInputElement).value);
+    const max_disk_gb = parseInt((card.querySelector('[data-field="max_disk_gb"]') as HTMLInputElement).value);
+    const max_ram_mb = Math.round(ram_gb * 1024);
+    if ([max_cpu, max_ram_mb, max_disk_gb].some((v) => isNaN(v) || v <= 0)) {
+      toast('Valores inválidos: todos los límites deben ser > 0.', 'error'); return;
+    }
+    try {
+      const res = await apiFetch(`/admin/quotas/${encodeURIComponent(poolName)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_cpu, max_ram_mb, max_disk_gb }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) toast(`Cuota de «${poolName}» guardada.`, 'success');
+      else toast(typeof data.detail === 'string' ? data.detail : 'No se pudo guardar.', 'error');
+    } catch (_) { toast('Error de red al guardar.', 'error'); }
+  }
+
+  // ── Grupos ──
+  function chip(text: string, extra = '') {
+    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-[11px] text-slate-300 ${extra}">${text}</span>`;
+  }
+  function memberChip(gid: string, user: string): string {
+    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-[11px] text-slate-300">${esc(user)}<button data-rm-member="${esc(user)}" data-group="${esc(gid)}" title="Quitar del grupo" class="text-slate-500 hover:text-red-400 leading-none">✕</button></span>`;
+  }
+  function addUserControl(gid: string, members: string[]): string {
+    const avail = ALL_USERS.filter((u) => !members.includes(u));
+    if (!avail.length) return '<span class="text-[11px] text-slate-600">todos los usuarios ya son miembros</span>';
+    return `<select data-add-member="${esc(gid)}" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-slate-300">
+      <option value="">➕ Añadir usuario…</option>${avail.map((u) => `<option value="${esc(u)}">${esc(u)}</option>`).join('')}
+    </select>`;
+  }
+  async function loadGroups() {
+    groupsLoading.classList.remove('hidden'); groupsGrid.classList.add('hidden'); groupsEmpty.classList.add('hidden');
+    try {
+      if (!ALL_USERS.length) {
+        try { const ur = await apiFetch('/admin/users'); if (ur.ok) ALL_USERS = (await ur.json()).map((u: any) => u.userid); } catch (_) {}
+      }
+      const res = await apiFetch('/admin/groups');
+      if (!res.ok) { groupsLoading.textContent = 'No se pudieron cargar los grupos.'; return; }
+      const data: any[] = await res.json();
+      groupsLoading.classList.add('hidden');
+      if (!data.length) { groupsEmpty.classList.remove('hidden'); return; }
+      groupsGrid.innerHTML = data.map((g) => {
+        const members = g.members.length ? g.members.map((m: string) => memberChip(g.groupid, m)).join(' ') : '<span class="text-[11px] text-slate-600">sin miembros</span>';
+        const pools = g.pools.length ? g.pools.map((p: any) =>
+          `<span class="ui-badge ${p.exists ? 'ui-badge-ok' : 'ui-badge-error'}">${esc(p.poolid)}${p.exists ? '' : ' · no existe'}</span>`).join(' ')
+          : '<span class="text-[11px] text-slate-600">ningún pool</span>';
+        const vnets = g.vnets.length ? g.vnets.map((v: any) => chip(`${esc(v.vnet)} <span class="text-slate-500">(${esc(v.zone)})</span>`)).join(' ') : '';
+        return `<div class="ui-card ui-card-hover p-4 space-y-3" data-group="${esc(g.groupid)}">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <div class="font-mono text-sm text-white truncate">${esc(g.groupid)}</div>
+              ${g.comment ? `<div class="text-[11px] text-slate-500 truncate">${esc(g.comment)}</div>` : ''}
+            </div>
+            <button data-del-group="${esc(g.groupid)}" class="ui-btn ui-btn-danger shrink-0 !py-1.5 !px-2.5 text-xs">Eliminar</button>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Miembros</div>
+            <div class="flex flex-wrap items-center gap-1.5">${members}</div>
+            <div class="mt-2">${addUserControl(g.groupid, g.members)}</div>
+          </div>
+          <div><div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Pools</div><div class="flex flex-wrap gap-1.5">${pools}</div></div>
+          ${vnets ? `<div><div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">VNets</div><div class="flex flex-wrap gap-1.5">${vnets}</div></div>` : ''}
+        </div>`;
+      }).join('');
+      groupsGrid.classList.remove('hidden');
+    } catch (_) { groupsLoading.textContent = 'Error de red.'; }
+  }
+
+  // ── Borrado (delegación) ──
+  async function doDelete(kind: 'pool' | 'group', name: string) {
+    const labels = kind === 'pool'
+      ? { t: `Eliminar pool «${name}»`, m: 'Se eliminará el Resource Pool del clúster (las VMs no se destruyen). Si el pool aún contiene recursos, se bloqueará.' }
+      : { t: `Eliminar grupo «${name}»`, m: 'Se eliminará el grupo y sus permisos (ACL). Los usuarios miembros no se borran.' };
+    if (!(await confirmDialog(labels.t, labels.m))) return;
+    try {
+      const res = await apiFetch(`/admin/${kind === 'pool' ? 'pools' : 'groups'}/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { toast(data.message || 'Eliminado correctamente.', 'success'); kind === 'pool' ? loadPools() : loadGroups(); }
+      else { toast(typeof data.detail === 'string' ? data.detail : 'No se pudo eliminar.', 'error'); }
+    } catch (_) { toast('Error de red al eliminar.', 'error'); }
+  }
+
+  async function changeMember(method: 'POST' | 'DELETE', gid: string, userid: string) {
+    try {
+      const url = method === 'POST'
+        ? `/admin/groups/${encodeURIComponent(gid)}/members`
+        : `/admin/groups/${encodeURIComponent(gid)}/members/${encodeURIComponent(userid)}`;
+      const opts: any = { method };
+      if (method === 'POST') { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify({ userid }); }
+      const res = await apiFetch(url, opts);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { toast(data.message || 'Hecho.', 'success'); loadGroups(); }
+      else { toast(typeof data.detail === 'string' ? data.detail : 'No se pudo actualizar el grupo.', 'error'); }
+    } catch (_) { toast('Error de red.', 'error'); }
+  }
+
+  poolsGrid.addEventListener('click', (e) => {
+    const del = (e.target as HTMLElement).closest('[data-del-pool]') as HTMLElement | null;
+    if (del) { doDelete('pool', del.dataset.delPool!); return; }
+    const save = (e.target as HTMLElement).closest('[data-save-pool]') as HTMLElement | null;
+    if (save) savePoolQuota(save.dataset.savePool!);
+  });
+  groupsGrid.addEventListener('click', (e) => {
+    const del = (e.target as HTMLElement).closest('[data-del-group]') as HTMLElement | null;
+    if (del) { doDelete('group', del.dataset.delGroup!); return; }
+    const rm = (e.target as HTMLElement).closest('[data-rm-member]') as HTMLElement | null;
+    if (rm) changeMember('DELETE', rm.dataset.group!, rm.dataset.rmMember!);
+  });
+  groupsGrid.addEventListener('change', (e) => {
+    const sel = (e.target as HTMLElement).closest('[data-add-member]') as HTMLSelectElement | null;
+    if (sel && sel.value) changeMember('POST', sel.dataset.addMember!, sel.value);
+  });
+
+  document.getElementById('tnRefresh')!.addEventListener('click', () => {
+    tabPools.classList.contains('hidden') ? loadGroups() : loadPools();
+  });
+
+  showTab('pools');
+</script>
