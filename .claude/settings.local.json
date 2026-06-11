@@ -14,7 +14,8 @@
       "Bash(grep -v \"^$\")",
       "Bash(docker compose *)",
       "Bash(curl -s -o /dev/null -w 'CORS /admin/quotas: %{http_code}\\\\n' -X OPTIONS http://192.168.10.201:8000/api/admin/quotas -H 'Origin: http://192.168.10.201' -H 'Access-Control-Request-Method: GET')",
-      "Bash(npx astro *)"
+      "Bash(npx astro *)",
+      "Bash(./venv/bin/python3 *)"
     ]
   }
 }

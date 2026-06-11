@@ -44,15 +44,24 @@ def _blindaje_ok(c: dict) -> bool:
         database.delete_lifecycle(c["vm_name"])
         return False
 
-    # 3) Name + pool must match what we registered. Guards against vmid reuse,
-    #    a VM moved out of the owner's pool, or any DB↔cluster desync.
+    # 3) Name must match what we registered. Guards against vmid reuse or any
+    #    DB↔cluster desync.
     if res.get("name") != c["vm_name"]:
         log.warning("Reaper: nombre no coincide para vmid=%s (cluster=%r, db=%r); omitida",
                     c["vmid"], res.get("name"), c["vm_name"])
         return False
-    if res.get("pool") != c["pool_name"]:
+
+    # 4) Pool must match too — pero solo si cluster/resources nos devuelve ese dato.
+    #    El campo `pool` requiere el privilegio `Pool.Audit`, que NO forma parte de
+    #    los privilegios mínimos documentados para el token (blueprints/README.md);
+    #    con el token estándar Proxmox devuelve `pool: null` para TODAS las VMs,
+    #    lo que haría fallar esta comprobación SIEMPRE y dejaría la VM en
+    #    'expiring' para siempre. Si el token sí tiene Pool.Audit, se sigue
+    #    aplicando la comprobación normalmente.
+    cluster_pool = res.get("pool")
+    if cluster_pool is not None and cluster_pool != c["pool_name"]:
         log.warning("Reaper: pool no coincide para %s (cluster=%r, db=%r); omitida",
-                    c["vm_name"], res.get("pool"), c["pool_name"])
+                    c["vm_name"], cluster_pool, c["pool_name"])
         return False
 
     return True
